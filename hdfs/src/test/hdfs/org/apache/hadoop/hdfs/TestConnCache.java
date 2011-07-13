@@ -81,8 +81,7 @@ public class TestConnCache {
       reader = (BlockReader) invocation.callRealMethod();
       if (sock == null) {
         sock = reader.dnSock;
-      } else if (prevReader != null && prevReader.hasSentStatusCode()) {
-        // Can't reuse socket if the previous BlockReader didn't read till EOS.
+      } else if (prevReader != null) {
         assertSame("DFSInputStream should use the same socket",
                    sock, reader.dnSock);
       } return reader;

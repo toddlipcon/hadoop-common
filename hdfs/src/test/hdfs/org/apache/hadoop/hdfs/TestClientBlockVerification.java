@@ -20,9 +20,11 @@ package org.apache.hadoop.hdfs;
 
 import java.util.List;
 
+import org.apache.commons.logging.impl.Log4JLogger;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status;
 import org.apache.hadoop.fs.Path;
+import org.apache.log4j.Level;
 
 import org.junit.Test;
 import org.junit.AfterClass;
@@ -38,6 +40,9 @@ public class TestClientBlockVerification {
   static final int FILE_SIZE_K = 256;
   static LocatedBlock testBlock = null;
 
+  static {
+    ((Log4JLogger)BlockReader.LOG).getLogger().setLevel(Level.ALL);
+  }
   @BeforeClass
   public static void setupCluster() throws Exception {
     final int REPLICATION_FACTOR = 1;

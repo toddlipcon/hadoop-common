@@ -19,7 +19,6 @@ package org.apache.hadoop.hdfs;
 
 import static org.apache.hadoop.hdfs.protocol.HdfsProtoUtil.vintPrefixed;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -28,10 +27,13 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.fs.FSInputChecker;
-import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.ChecksumException;
+import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.datatransfer.PacketHeader;
 import org.apache.hadoop.hdfs.protocol.datatransfer.Sender;
@@ -41,11 +43,12 @@ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.security.token.block.InvalidBlockTokenException;
 import org.apache.hadoop.hdfs.server.common.HdfsConstants;
-import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.net.SocketInputStream;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.DataChecksum;
 
+import com.google.common.base.Preconditions;
 
 /** This is a wrapper around connection to datanode
  * and understands checksum, offset etc.
@@ -68,23 +71,27 @@ import org.apache.hadoop.util.DataChecksum;
  * Please see DataNode for the RPC specification.
  */
 @InterfaceAudience.Private
-public class BlockReader extends FSInputChecker {
+public class BlockReader extends FSInputStream {
 
+  static final Log LOG = LogFactory.getLog(BlockReader.class);
+  
   Socket dnSock; //for now just sending the status code (e.g. checksumOk) after the read.
-  private DataInputStream in;
+  private ReadableByteChannel in;
   private DataChecksum checksum;
+  
+  private PacketHeader curHeader;
+  private ByteBuffer curPacketBuf = null;
+  private ByteBuffer curDataSlice = null;
+
 
   /** offset in block of the last chunk received */
-  private long lastChunkOffset = -1;
-  private long lastChunkLen = -1;
   private long lastSeqNo = -1;
 
   /** offset in block where reader wants to actually read */
   private long startOffset;
+  private final String filename;
 
-  /** offset in block of of first chunk - may be less than startOffset
-      if startOffset is not chunk-aligned */
-  private final long firstChunkOffset;
+  private ByteBuffer headerBuf = ByteBuffer.allocateDirect(PacketHeader.PKT_HEADER_LEN);
 
   private int bytesPerChecksum;
   private int checksumSize;
@@ -94,7 +101,9 @@ public class BlockReader extends FSInputChecker {
    * This is the amount that the user has requested plus some padding
    * at the beginning so that the read can begin on a chunk boundary.
    */
-  private final long bytesNeededToFinish;
+  private long bytesNeededToFinish;
+
+  private final boolean verifyChecksum;
 
   private boolean eos = false;
   private boolean sentStatusCode = false;
@@ -104,48 +113,110 @@ public class BlockReader extends FSInputChecker {
   /** Amount of unread data in the current received packet */
   int dataLeft = 0;
   
-  /* FSInputChecker interface */
-  
-  /* same interface as inputStream java.io.InputStream#read()
-   * used by DFSInputStream#read()
-   * This violates one rule when there is a checksum error:
-   * "Read should not modify user buffer before successful read"
-   * because it first reads the data to user buffer and then checks
-   * the checksum.
-   */
   @Override
   public synchronized int read(byte[] buf, int off, int len) 
                                throws IOException {
-    
-    // This has to be set here, *before* the skip, since we can
-    // hit EOS during the skip, in the case that our entire read
-    // is smaller than the checksum chunk.
-    boolean eosBefore = eos;
+    if (eos) {
+      // Already hit EOF
+      return -1;
+    }
 
-    //for the first read, skip the extra bytes at the front.
-    if (lastChunkLen < 0 && startOffset > firstChunkOffset && len > 0) {
-      // Skip these bytes. But don't call this.skip()!
-      int toSkip = (int)(startOffset - firstChunkOffset);
-      if ( skipBuf == null ) {
-        skipBuf = new byte[bytesPerChecksum];
-      }
-      if ( super.read(skipBuf, 0, toSkip) != toSkip ) {
-        // should never happen
-        throw new IOException("Could not skip required number of bytes");
-      }
+    if (curPacketBuf == null || curDataSlice.remaining() == 0) {
+      readNextPacket();
+    }
+    if (curDataSlice.remaining() == 0) {
+      // we're at EOF now
+      return -1;
     }
     
-    int nRead = super.read(buf, off, len);
+    int nRead = Math.min(curDataSlice.remaining(), len);
+    curDataSlice.get(buf, off, nRead);
+    
+    return nRead;
+  }
 
-    // if eos was set in the previous read, send a status code to the DN
-    if (eos && !eosBefore && nRead >= 0) {
-      if (needChecksum()) {
+  private void readNextPacket() throws IOException {
+    Preconditions.checkState(curHeader == null || !curHeader.isLastPacketInBlock());
+    
+    //Read packet headers.
+    readPacketHeader();
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("DFSClient readNextPacket got header " + curHeader);
+    }
+
+    // Sanity check the lengths
+    if (!curHeader.sanityCheck(lastSeqNo)) {
+         throw new IOException("BlockReader: error in packet header " +
+                               curHeader);
+    }
+    
+    if (curHeader.getDataLen() > 0) {
+      int chunks = 1 + (curHeader.getDataLen() - 1) / bytesPerChecksum;
+      int checksumsLen = chunks * checksumSize;
+      int bufsize = checksumsLen + curHeader.getDataLen();
+      
+      resetPacketBuffer(checksumsLen, curHeader.getDataLen());
+  
+      lastSeqNo = curHeader.getSeqno();
+      LOG.debug("bufSize: " + bufsize);
+      // dataLeft = curHeader.getDataLen();
+      if (bufsize > 0) {
+        readChannelFully(in, curPacketBuf);
+        curPacketBuf.flip();
+        if (verifyChecksum) {
+          verifyPacketChecksums();
+        }
+      }
+      bytesNeededToFinish -= curHeader.getDataLen();
+      LOG.debug("bytesNeededToFinish = " + bytesNeededToFinish);
+    }    
+    
+    // First packet will include some data prior to the first byte
+    // the user requested. Skip it.
+    if (curHeader.getOffsetInBlock() < startOffset) {
+      int newPos = (int) (startOffset - curHeader.getOffsetInBlock());
+      curDataSlice.position(newPos);
+    }
+
+    // If we've now satisfied the whole client read, read one last packet
+    // header, which should be empty
+    if (bytesNeededToFinish <= 0) {
+      readTrailingEmptyPacket();
+      if (verifyChecksum) {
         sendReadResult(dnSock, Status.CHECKSUM_OK);
       } else {
         sendReadResult(dnSock, Status.SUCCESS);
       }
     }
-    return nRead;
+  }
+
+  private void verifyPacketChecksums() throws ChecksumException {
+    checksum.verifyChunkedSums(curDataSlice, curPacketBuf,
+        filename, curHeader.getOffsetInBlock()); // TODO check offset
+  }
+
+  private static void readChannelFully(ReadableByteChannel ch, ByteBuffer buf)
+  throws IOException {
+    while (buf.remaining() > 0) {
+      int n = ch.read(buf);
+      if (n < 0) {
+        throw new IOException("Premature EOF reading from " + ch);
+      }
+    }
+  }
+
+  private void resetPacketBuffer(int checksumsLen, int dataLen) {
+    int packetLen = checksumsLen + dataLen;
+    if (curPacketBuf == null ||
+        curPacketBuf.capacity() < packetLen) {
+      curPacketBuf = ByteBuffer.allocateDirect(packetLen);
+    }
+    curPacketBuf.position(checksumsLen);
+    curDataSlice = curPacketBuf.slice();
+    curDataSlice.limit(dataLen);
+    curPacketBuf.clear();
+    curPacketBuf.limit(checksumsLen + dataLen);
   }
 
   @Override
@@ -187,178 +258,44 @@ public class BlockReader extends FSInputChecker {
   public void seek(long pos) throws IOException {
     throw new IOException("Seek() is not supported in BlockInputChecker");
   }
-
-  @Override
-  protected long getChunkPosition(long pos) {
-    throw new RuntimeException("getChunkPosition() is not supported, " +
-                               "since seek is not required");
-  }
   
-  /**
-   * Makes sure that checksumBytes has enough capacity 
-   * and limit is set to the number of checksum bytes needed 
-   * to be read.
-   */
-  private void adjustChecksumBytes(int dataLen) {
-    int requiredSize = 
-      ((dataLen + bytesPerChecksum - 1)/bytesPerChecksum)*checksumSize;
-    if (checksumBytes == null || requiredSize > checksumBytes.capacity()) {
-      checksumBytes =  ByteBuffer.wrap(new byte[requiredSize]);
-    } else {
-      checksumBytes.clear();
-    }
-    checksumBytes.limit(requiredSize);
+  private void readPacketHeader() throws IOException {
+    headerBuf.clear();
+    readChannelFully(in, headerBuf);
+    headerBuf.flip();
+    if (curHeader == null) curHeader = new PacketHeader();
+    curHeader.readFields(headerBuf);
   }
-  
-  @Override
-  protected synchronized int readChunk(long pos, byte[] buf, int offset, 
-                                       int len, byte[] checksumBuf) 
-                                       throws IOException {
-    // Read one chunk.
-    if (eos) {
-      // Already hit EOF
-      return -1;
+
+  private void readTrailingEmptyPacket() throws IOException {
+    headerBuf.clear();
+    readChannelFully(in, headerBuf);
+    headerBuf.flip();
+    PacketHeader trailer = new PacketHeader();
+    trailer.readFields(headerBuf);
+    if (!trailer.isLastPacketInBlock() ||
+       trailer.getDataLen() != 0) {
+      throw new IOException("Expected empty end-of-read packet! Header: " +
+                            trailer);
     }
-    
-    // Read one DATA_CHUNK.
-    long chunkOffset = lastChunkOffset;
-    if ( lastChunkLen > 0 ) {
-      chunkOffset += lastChunkLen;
-    }
-    
-    // pos is relative to the start of the first chunk of the read.
-    // chunkOffset is relative to the start of the block.
-    // This makes sure that the read passed from FSInputChecker is the
-    // for the same chunk we expect to be reading from the DN.
-    if ( (pos + firstChunkOffset) != chunkOffset ) {
-      throw new IOException("Mismatch in pos : " + pos + " + " + 
-                            firstChunkOffset + " != " + chunkOffset);
-    }
-
-    // Read next packet if the previous packet has been read completely.
-    if (dataLeft <= 0) {
-      //Read packet headers.
-      PacketHeader header = new PacketHeader();
-      header.readFields(in);
-
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("DFSClient readChunk got header " + header);
-      }
-
-      // Sanity check the lengths
-      if (!header.sanityCheck(lastSeqNo)) {
-           throw new IOException("BlockReader: error in packet header " +
-                                 header);
-      }
-
-      lastSeqNo = header.getSeqno();
-      dataLeft = header.getDataLen();
-      adjustChecksumBytes(header.getDataLen());
-      if (header.getDataLen() > 0) {
-        IOUtils.readFully(in, checksumBytes.array(), 0,
-                          checksumBytes.limit());
-      }
-    }
-
-    // Sanity checks
-    assert len >= bytesPerChecksum;
-    assert checksum != null;
-    assert checksumSize == 0 || (checksumBuf.length % checksumSize == 0);
-
-
-    int checksumsToRead, bytesToRead;
-
-    if (checksumSize > 0) {
-
-      // How many chunks left in our packet - this is a ceiling
-      // since we may have a partial chunk at the end of the file
-      int chunksLeft = (dataLeft - 1) / bytesPerChecksum + 1;
-
-      // How many chunks we can fit in databuffer
-      //  - note this is a floor since we always read full chunks
-      int chunksCanFit = Math.min(len / bytesPerChecksum,
-                                  checksumBuf.length / checksumSize);
-
-      // How many chunks should we read
-      checksumsToRead = Math.min(chunksLeft, chunksCanFit);
-      // How many bytes should we actually read
-      bytesToRead = Math.min(
-        checksumsToRead * bytesPerChecksum, // full chunks
-        dataLeft); // in case we have a partial
-    } else {
-      // no checksum
-      bytesToRead = Math.min(dataLeft, len);
-      checksumsToRead = 0;
-    }
-
-    if ( bytesToRead > 0 ) {
-      // Assert we have enough space
-      assert bytesToRead <= len;
-      assert checksumBytes.remaining() >= checksumSize * checksumsToRead;
-      assert checksumBuf.length >= checksumSize * checksumsToRead;
-      IOUtils.readFully(in, buf, offset, bytesToRead);
-      checksumBytes.get(checksumBuf, 0, checksumSize * checksumsToRead);
-    }
-
-    dataLeft -= bytesToRead;
-    assert dataLeft >= 0;
-
-    lastChunkOffset = chunkOffset;
-    lastChunkLen = bytesToRead;
-
-    // If there's no data left in the current packet after satisfying
-    // this read, and we have satisfied the client read, we expect
-    // an empty packet header from the DN to signify this.
-    // Note that pos + bytesToRead may in fact be greater since the
-    // DN finishes off the entire last chunk.
-    if (dataLeft == 0 &&
-        pos + bytesToRead >= bytesNeededToFinish) {
-
-      // Read header
-      PacketHeader hdr = new PacketHeader();
-      hdr.readFields(in);
-
-      if (!hdr.isLastPacketInBlock() ||
-          hdr.getDataLen() != 0) {
-        throw new IOException("Expected empty end-of-read packet! Header: " +
-                              hdr);
-      }
-
-      eos = true;
-    }
-
-    if ( bytesToRead == 0 ) {
-      return -1;
-    }
-
-    return bytesToRead;
   }
-  
+
   private BlockReader(String file, String bpid, long blockId,
-      DataInputStream in, DataChecksum checksum, boolean verifyChecksum,
+      ReadableByteChannel in, DataChecksum checksum, boolean verifyChecksum,
       long startOffset, long firstChunkOffset, long bytesToRead, Socket dnSock) {
     // Path is used only for printing block and file information in debug
-    super(new Path("/blk_" + blockId + ":" + bpid + ":of:"+ file)/*too non path-like?*/,
-          1, verifyChecksum,
-          checksum.getChecksumSize() > 0? checksum : null, 
-          checksum.getBytesPerChecksum(),
-          checksum.getChecksumSize());
-    
     this.dnSock = dnSock;
     this.in = in;
     this.checksum = checksum;
+    this.verifyChecksum = verifyChecksum;
     this.startOffset = Math.max( startOffset, 0 );
+    this.filename = file;
 
     // The total number of bytes that we need to transfer from the DN is
     // the amount that the user wants (bytesToRead), plus the padding at
     // the beginning in order to chunk-align. Note that the DN may elect
     // to send more than this amount if the read starts/ends mid-chunk.
     this.bytesNeededToFinish = bytesToRead + (startOffset - firstChunkOffset);
-
-    this.firstChunkOffset = firstChunkOffset;
-    lastChunkOffset = firstChunkOffset;
-    lastChunkLen = -1;
-
     bytesPerChecksum = this.checksum.getBytesPerChecksum();
     checksumSize = this.checksum.getChecksumSize();
   }
@@ -412,9 +349,9 @@ public class BlockReader extends FSInputChecker {
     // Get bytes in block, set streams
     //
 
-    DataInputStream in = new DataInputStream(
-        new BufferedInputStream(NetUtils.getInputStream(sock), 
-                                bufferSize));
+    SocketInputStream sin =
+      (SocketInputStream)NetUtils.getInputStream(sock); 
+    DataInputStream in = new DataInputStream(sin);
     
     BlockOpResponseProto status = BlockOpResponseProto.parseFrom(
         vintPrefixed(in));
@@ -448,7 +385,7 @@ public class BlockReader extends FSInputChecker {
     }
 
     return new BlockReader(file, block.getBlockPoolId(), block.getBlockId(),
-        in, checksum, verifyChecksum, startOffset, firstChunkOffset, len, sock);
+        sin, checksum, verifyChecksum, startOffset, firstChunkOffset, len, sock);
   }
 
   @Override
@@ -462,13 +399,6 @@ public class BlockReader extends FSInputChecker {
     // in will be closed when its Socket is closed.
   }
   
-  /** kind of like readFully(). Only reads as much as possible.
-   * And allows use of protected readFully().
-   */
-  public int readAll(byte[] buf, int offset, int len) throws IOException {
-    return readFully(this, buf, offset, len);
-  }
-
   /**
    * Take the socket used to talk to the DN.
    */
@@ -523,5 +453,11 @@ public class BlockReader extends FSInputChecker {
   public static String getFileName(final InetSocketAddress s,
       final String poolId, final long blockId) {
     return s.toString() + ":" + poolId + ":" + blockId;
+  }
+
+  @Override
+  public long getPos() throws IOException {
+    // DFSInputStream never calls this
+    throw new UnsupportedOperationException();
   }
 }
