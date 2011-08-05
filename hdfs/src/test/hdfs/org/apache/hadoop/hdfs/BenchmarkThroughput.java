@@ -148,7 +148,9 @@ public class BenchmarkThroughput extends Configured implements Tool {
     Path f = null;
     try {
       f = writeFile(fs, name, conf, size);
+      for (int i = 0; i < 10; i++) {
       readFile(fs, f, name, conf);
+      }
     } finally {
       try {
         if (f != null) {
