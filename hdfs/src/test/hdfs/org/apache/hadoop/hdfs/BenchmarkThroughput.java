@@ -200,11 +200,13 @@ public class BenchmarkThroughput extends Configured implements Tool {
     System.out.println("Local = " + localDir);
     ChecksumFileSystem checkedLocal = FileSystem.getLocal(conf);
     FileSystem rawLocal = checkedLocal.getRawFileSystem();
+    /*
     for(int i=0; i < reps; ++i) {
       writeAndReadLocalFile("local", conf, SIZE);
       writeAndReadFile(rawLocal, "raw", conf, SIZE);
       writeAndReadFile(checkedLocal, "checked", conf, SIZE);
     }
+    */
     MiniDFSCluster cluster = null;
     try {
       cluster = new MiniDFSCluster.Builder(conf)
