@@ -57,7 +57,7 @@ public class BenchmarkThroughput extends Configured implements Tool {
 
   private void printMeasurements() {
     System.out.println(" time: " +
-                       ((System.currentTimeMillis() - startTime)/1000));
+                       ((System.currentTimeMillis() - startTime)/1000.0));
   }
 
   private Path writeLocalFile(String name, Configuration conf,
@@ -189,11 +189,12 @@ public class BenchmarkThroughput extends Configured implements Tool {
     Configuration conf = getConf();
     // the size of the file to write
     long SIZE = conf.getLong("dfsthroughput.file.size",
-        10L * 1024 * 1024 * 1024);
+        1L * 1024 * 1024 * 1024);
     BUFFER_SIZE = conf.getInt("dfsthroughput.buffer.size", 4 * 1024);
 
-    String localDir = conf.get("mapred.temp.dir");
-    dir = new LocalDirAllocator("mapred.temp.dir");
+    String localDir = conf.get("hadoop.tmp.dir");
+    new File(localDir).mkdirs();
+    dir = new LocalDirAllocator("hadoop.tmp.dir");
 
     System.setProperty("test.build.data", localDir);
     System.out.println("Local = " + localDir);
