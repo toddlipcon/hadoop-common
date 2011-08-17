@@ -24,6 +24,7 @@ import org.apache.hadoop.examples.pi.DistBbp;
 import org.apache.hadoop.examples.terasort.TeraGen;
 import org.apache.hadoop.examples.terasort.TeraSort;
 import org.apache.hadoop.examples.terasort.TeraValidate;
+import org.apache.hadoop.examples.terasort.TeraRead;
 import org.apache.hadoop.util.ProgramDriver;
 
 /**
@@ -65,6 +66,7 @@ public class ExampleDriver {
       pgd.addClass("teragen", TeraGen.class, "Generate data for the terasort");
       pgd.addClass("terasort", TeraSort.class, "Run the terasort");
       pgd.addClass("teravalidate", TeraValidate.class, "Checking results of terasort");
+      pgd.addClass("teraread", TeraRead.class, "Reading results or input of terasort");
       exitCode = pgd.driver(argv);
     }
     catch(Throwable e){
