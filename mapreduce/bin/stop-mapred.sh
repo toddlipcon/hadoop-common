@@ -27,5 +27,5 @@ else
   . "$bin/mapred-config.sh"
 fi
 
-"$HADOOP_PREFIX"/bin/hadoop-daemon.sh --config $HADOOP_CONF_DIR --script "$bin"/../bin/mapred stop jobtracker
-"$HADOOP_PREFIX"/bin/hadoop-daemons.sh --config $HADOOP_CONF_DIR --script "$bin"/../bin/mapred stop tasktracker
+"$HADOOP_PREFIX"/sbin/hadoop-daemon.sh --config $HADOOP_CONF_DIR --script "$bin"/../bin/mapred stop jobtracker
+"$HADOOP_PREFIX"/sbin/hadoop-daemons.sh --config $HADOOP_CONF_DIR --script "$bin"/../bin/mapred stop tasktracker
