@@ -73,7 +73,7 @@ import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.Daemon;
 import org.apache.hadoop.util.DataChecksum;
 import org.apache.hadoop.util.Progressable;
-import org.apache.hadoop.util.PureJavaCrc32;
+import org.apache.hadoop.util.PureJavaCrc32C;
 
 
 /****************************************************************
@@ -1207,7 +1207,7 @@ class DFSOutputStream extends FSOutputSummer implements Syncable {
 
   private DFSOutputStream(DFSClient dfsClient, String src, long blockSize, Progressable progress,
       int bytesPerChecksum, short replication) throws IOException {
-    super(new PureJavaCrc32(), bytesPerChecksum, 4);
+    super(new PureJavaCrc32C(), bytesPerChecksum, 4);
     this.dfsClient = dfsClient;
     this.src = src;
     this.blockSize = blockSize;
@@ -1225,7 +1225,7 @@ class DFSOutputStream extends FSOutputSummer implements Syncable {
                             "multiple of io.bytes.per.checksum");
                             
     }
-    checksum = DataChecksum.newDataChecksum(DataChecksum.CHECKSUM_CRC32, 
+    checksum = DataChecksum.newDataChecksum(DataChecksum.CHECKSUM_CRC32C, 
                                             bytesPerChecksum);
   }
 
