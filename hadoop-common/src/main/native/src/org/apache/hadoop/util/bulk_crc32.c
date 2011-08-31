@@ -40,7 +40,7 @@ static uint32_t crc32_zlib_sb8(uint32_t crc, const uint8_t *buf, size_t length);
 static uint32_t crc32c_sb8(uint32_t crc, const uint8_t *buf, size_t length);
 
 #ifdef USE_PIPELINED
-static void pipilined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks);
+static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks);
 #endif USE_PIPELINED
 static int cached_cpu_supports_crc32; // initialized by constructor below
 static uint32_t crc32c_hardware(uint32_t crc, const uint8_t* data, size_t length);
@@ -81,7 +81,7 @@ int bulk_verify_crc(const uint8_t *data, size_t data_len,
     /* Process three blocks at a time */
     while (likely(n_blocks >= 3)) {
       crc1 = crc2 = crc3 = crc_init();  
-      pipilined_crc32c(&crc1, &crc2, &crc3, data, bytes_per_checksum, 3);
+      pipelined_crc32c(&crc1, &crc2, &crc3, data, bytes_per_checksum, 3);
 
       crc = ntohl(crc_val(crc1));
       if ((crc = ntohl(crc_val(crc1))) != *sums)
@@ -102,26 +102,25 @@ int bulk_verify_crc(const uint8_t *data, size_t data_len,
     /* One or two blocks */
     if (n_blocks) {
       crc1 = crc2 = crc_init();
-      pipilined_crc32c(&crc1, &crc2, &crc3, data, bytes_per_checksum, n_blocks);
+      pipelined_crc32c(&crc1, &crc2, &crc3, data, bytes_per_checksum, n_blocks);
 
-      crc = ntohl(crc_val(crc1));
       if ((crc = ntohl(crc_val(crc1))) != *sums)
         goto return_crc_error;
+      data += bytes_per_checksum;
       sums++;
       if (n_blocks == 2) {
-        crc = ntohl(crc_val(crc2));
         if ((crc = ntohl(crc_val(crc2))) != *sums)
           goto return_crc_error;
         sums++;
+        data += bytes_per_checksum;
       }
     }
  
     /* For something smaller than a block */
     if (remainder) {
       crc1 = crc_init();
-      pipilined_crc32c(&crc1, &crc2, &crc3, data, remainder, 1);
+      pipelined_crc32c(&crc1, &crc2, &crc3, data, remainder, 1);
 
-      crc = ntohl(crc_val(crc1));
       if ((crc = ntohl(crc_val(crc1))) != *sums)
         goto return_crc_error;
     }
@@ -366,7 +365,7 @@ static uint32_t crc32c_hardware(uint32_t crc, const uint8_t* p_buf, size_t lengt
  *   block_size : The size of each block in bytes.
  *   num_blocks : The number of blocks to work on. Min = 1, Max = 3
  */
-static void pipilined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks) {
+static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks) {
   uint64_t c1 = *crc1;
   uint64_t c2 = *crc2;
   uint64_t c3 = *crc3;
@@ -529,7 +528,7 @@ static uint32_t crc32c_hardware(uint32_t crc, const uint8_t* p_buf, size_t lengt
  *   block_size : The size of each block in bytes. 
  *   num_blocks : The number of blocks to work on. Min = 1, Max = 3
  */
-static void pipilined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks) {
+static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks) {
   uint32_t c1 = *crc1;
   uint32_t c2 = *crc2;
   uint32_t c3 = *crc3;
