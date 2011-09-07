@@ -35,7 +35,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.protocol.FSConstants;
+import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.protocol.LayoutVersion;
 import org.apache.hadoop.hdfs.protocol.LayoutVersion.Feature;
 import org.apache.hadoop.hdfs.server.common.InconsistentFSStateException;
@@ -44,9 +44,9 @@ import org.apache.hadoop.hdfs.server.common.Storage.StorageDirectory;
 import org.apache.hadoop.hdfs.server.common.Storage.StorageState;
 import org.apache.hadoop.hdfs.server.common.Util;
 import static org.apache.hadoop.hdfs.server.common.Util.now;
-import org.apache.hadoop.hdfs.server.common.HdfsConstants.NamenodeRole;
-import org.apache.hadoop.hdfs.server.common.HdfsConstants.StartupOption;
-import org.apache.hadoop.hdfs.server.namenode.FSImageStorageInspector.LoadPlan;
+import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NamenodeRole;
+import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.StartupOption;
+
 import org.apache.hadoop.hdfs.server.namenode.NNStorage.NameNodeDirType;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage.NameNodeFile;
 import org.apache.hadoop.hdfs.server.protocol.CheckpointCommand;
@@ -227,11 +227,11 @@ public class FSImage implements Closeable {
     }
     if (startOpt != StartupOption.UPGRADE
         && layoutVersion < Storage.LAST_PRE_UPGRADE_LAYOUT_VERSION
-        && layoutVersion != FSConstants.LAYOUT_VERSION) {
+        && layoutVersion != HdfsConstants.LAYOUT_VERSION) {
       throw new IOException(
           "\nFile system image contains an old layout version " 
           + storage.getLayoutVersion() + ".\nAn upgrade to version "
-          + FSConstants.LAYOUT_VERSION + " is required.\n"
+          + HdfsConstants.LAYOUT_VERSION + " is required.\n"
           + "Please restart NameNode with -upgrade option.");
     }
     
@@ -349,7 +349,7 @@ public class FSImage implements Closeable {
     long oldCTime = storage.getCTime();
     storage.cTime = now();  // generate new cTime for the state
     int oldLV = storage.getLayoutVersion();
-    storage.layoutVersion = FSConstants.LAYOUT_VERSION;
+    storage.layoutVersion = HdfsConstants.LAYOUT_VERSION;
     
     List<StorageDirectory> errorSDs =
       Collections.synchronizedList(new ArrayList<StorageDirectory>());
@@ -423,7 +423,7 @@ public class FSImage implements Closeable {
     // Directories that don't have previous state do not rollback
     boolean canRollback = false;
     FSImage prevState = new FSImage(conf, getFSNamesystem());
-    prevState.getStorage().layoutVersion = FSConstants.LAYOUT_VERSION;
+    prevState.getStorage().layoutVersion = HdfsConstants.LAYOUT_VERSION;
     for (Iterator<StorageDirectory> it = storage.dirIterator(); it.hasNext();) {
       StorageDirectory sd = it.next();
       File prevDir = sd.getPreviousDir();
@@ -438,12 +438,12 @@ public class FSImage implements Closeable {
       // read and verify consistency of the prev dir
       prevState.getStorage().readPreviousVersionProperties(sd);
 
-      if (prevState.getLayoutVersion() != FSConstants.LAYOUT_VERSION) {
+      if (prevState.getLayoutVersion() != HdfsConstants.LAYOUT_VERSION) {
         throw new IOException(
           "Cannot rollback to storage version " +
           prevState.getLayoutVersion() +
           " using this version of the NameNode, which uses storage version " +
-          FSConstants.LAYOUT_VERSION + ". " +
+          HdfsConstants.LAYOUT_VERSION + ". " +
           "Please use the previous version of HDFS to perform the rollback.");
       }
       canRollback = true;
@@ -584,32 +584,38 @@ public class FSImage implements Closeable {
     FSImageStorageInspector inspector = storage.readAndInspectDirs();
     
     isUpgradeFinalized = inspector.isUpgradeFinalized();
-    
+ 
+    FSImageStorageInspector.FSImageFile imageFile 
+      = inspector.getLatestImage();   
     boolean needToSave = inspector.needToSave();
+
+    Iterable<EditLogInputStream> editStreams = null;
+
+    editLog.recoverUnclosedStreams();
+
+    if (LayoutVersion.supports(Feature.TXID_BASED_LAYOUT, 
+                               getLayoutVersion())) {
+      editStreams = editLog.selectInputStreams(imageFile.getCheckpointTxId() + 1,
+                                               inspector.getMaxSeenTxId());
+    } else {
+      editStreams = FSImagePreTransactionalStorageInspector
+        .getEditLogStreams(storage);
+    }
+ 
+    LOG.debug("Planning to load image :\n" + imageFile);
+    for (EditLogInputStream l : editStreams) {
+      LOG.debug("\t Planning to load edit stream: " + l);
+    }
     
-    // Plan our load. This will throw if it's impossible to load from the
-    // data that's available.
-    LoadPlan loadPlan = inspector.createLoadPlan();    
-    LOG.debug("Planning to load image using following plan:\n" + loadPlan);
-
-    
-    // Recover from previous interrupted checkpoint, if any
-    needToSave |= loadPlan.doRecovery();
-
-    //
-    // Load in bits
-    //
-    StorageDirectory sdForProperties =
-      loadPlan.getStorageDirectoryForProperties();
-    storage.readProperties(sdForProperties);
-    File imageFile = loadPlan.getImageFile();
-
     try {
+      StorageDirectory sdForProperties = imageFile.sd;
+      storage.readProperties(sdForProperties);
+
       if (LayoutVersion.supports(Feature.TXID_BASED_LAYOUT,
                                  getLayoutVersion())) {
         // For txid-based layout, we should have a .md5 file
         // next to the image file
-        loadFSImage(imageFile);
+        loadFSImage(imageFile.getFile());
       } else if (LayoutVersion.supports(Feature.FSIMAGE_CHECKSUM,
                                         getLayoutVersion())) {
         // In 0.22, we have the checksum stored in the VERSION file.
@@ -621,17 +627,19 @@ public class FSImage implements Closeable {
               NNStorage.DEPRECATED_MESSAGE_DIGEST_PROPERTY +
               " not set for storage directory " + sdForProperties.getRoot());
         }
-        loadFSImage(imageFile, new MD5Hash(md5));
+        loadFSImage(imageFile.getFile(), new MD5Hash(md5));
       } else {
         // We don't have any record of the md5sum
-        loadFSImage(imageFile, null);
+        loadFSImage(imageFile.getFile(), null);
       }
     } catch (IOException ioe) {
-      throw new IOException("Failed to load image from " + loadPlan.getImageFile(), ioe);
+      FSEditLog.closeAllStreams(editStreams);
+      throw new IOException("Failed to load image from " + imageFile, ioe);
     }
     
-    long numLoaded = loadEdits(loadPlan.getEditsFiles());
-    needToSave |= needsResaveBasedOnStaleCheckpoint(imageFile, numLoaded);
+    long numLoaded = loadEdits(editStreams);
+    needToSave |= needsResaveBasedOnStaleCheckpoint(imageFile.getFile(),
+                                                    numLoaded);
     
     // update the txid for the edit log
     editLog.setNextTxId(storage.getMostRecentCheckpointTxId() + numLoaded + 1);
@@ -663,22 +671,25 @@ public class FSImage implements Closeable {
    * Load the specified list of edit files into the image.
    * @return the number of transactions loaded
    */
-  protected long loadEdits(List<File> editLogs) throws IOException {
-    LOG.debug("About to load edits:\n  " + Joiner.on("\n  ").join(editLogs));
+  protected long loadEdits(Iterable<EditLogInputStream> editStreams) throws IOException {
+    LOG.debug("About to load edits:\n  " + Joiner.on("\n  ").join(editStreams));
 
     long startingTxId = getLastAppliedTxId() + 1;
-    
-    FSEditLogLoader loader = new FSEditLogLoader(namesystem);
     int numLoaded = 0;
-    // Load latest edits
-    for (File edits : editLogs) {
-      LOG.debug("Reading " + edits + " expecting start txid #" + startingTxId);
-      EditLogFileInputStream editIn = new EditLogFileInputStream(edits);
-      int thisNumLoaded = loader.loadFSEdits(editIn, startingTxId);
-      startingTxId += thisNumLoaded;
-      numLoaded += thisNumLoaded;
-      lastAppliedTxId += thisNumLoaded;
-      editIn.close();
+
+    try {    
+      FSEditLogLoader loader = new FSEditLogLoader(namesystem);
+      
+      // Load latest edits
+      for (EditLogInputStream editIn : editStreams) {
+        LOG.info("Reading " + editIn + " expecting start txid #" + startingTxId);
+        int thisNumLoaded = loader.loadFSEdits(editIn, startingTxId);
+        startingTxId += thisNumLoaded;
+        numLoaded += thisNumLoaded;
+        lastAppliedTxId += thisNumLoaded;
+      }
+    } finally {
+      FSEditLog.closeAllStreams(editStreams);
     }
 
     // update the counts
