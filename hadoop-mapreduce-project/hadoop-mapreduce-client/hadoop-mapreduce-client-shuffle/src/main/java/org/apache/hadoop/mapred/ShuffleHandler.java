@@ -31,6 +31,7 @@ import static org.jboss.netty.handler.codec.http.HttpResponseStatus.UNAUTHORIZED
 import static org.jboss.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -55,6 +56,7 @@ import org.apache.hadoop.fs.LocalDirAllocator;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.DataInputByteBuffer;
 import org.apache.hadoop.io.DataOutputBuffer;
+import org.apache.hadoop.io.nativeio.NativeIO;
 import org.apache.hadoop.mapreduce.security.SecureShuffleUtils;
 import org.apache.hadoop.mapreduce.security.token.JobTokenIdentifier;
 import org.apache.hadoop.mapreduce.security.token.JobTokenSecretManager;
@@ -114,7 +116,13 @@ public class ShuffleHandler extends AbstractService
   private int port;
   private ChannelFactory selector;
   private final ChannelGroup accepted = new DefaultChannelGroup();
-
+  
+  /**
+   * Should the shuffle use posix_fadvise calls to manage the OS cache
+   * during sendfile
+   */
+  private boolean manageOsCache;
+  
   public static final String MAPREDUCE_SHUFFLE_SERVICEID =
       "mapreduce.shuffle";
 
@@ -125,6 +133,9 @@ public class ShuffleHandler extends AbstractService
 
   public static final String SHUFFLE_PORT_CONFIG_KEY = "mapreduce.shuffle.port";
   public static final int DEFAULT_SHUFFLE_PORT = 8080;
+  
+  public static final String SHUFFLE_MANAGE_OS_CACHE = "mapreduce.shuffle.manage.os.cache";
+  public static final boolean DEFAULT_SHUFFLE_MANAGE_OS_CACHE = true;
 
   @Metrics(about="Shuffle output metrics", context="mapred")
   static class ShuffleMetrics implements ChannelFutureListener {
@@ -231,6 +242,9 @@ public class ShuffleHandler extends AbstractService
 
   @Override
   public synchronized void init(Configuration conf) {
+    manageOsCache = conf.getBoolean(SHUFFLE_MANAGE_OS_CACHE,
+        DEFAULT_SHUFFLE_MANAGE_OS_CACHE);
+
     ThreadFactory bossFactory = new ThreadFactoryBuilder()
       .setNameFormat("ShuffleHandler Netty Boss #%d")
       .build();
@@ -468,14 +482,14 @@ public class ShuffleHandler extends AbstractService
           base + "/file.out", conf);
       LOG.debug("DEBUG1 " + base + " : " + mapOutputFileName + " : " +
           indexFileName);
-      IndexRecord info = 
+      final IndexRecord info = 
         indexCache.getIndexInformation(mapId, reduce, indexFileName, user);
       final ShuffleHeader header =
         new ShuffleHeader(mapId, info.partLength, info.rawLength, reduce);
       final DataOutputBuffer dob = new DataOutputBuffer();
       header.write(dob);
       ch.write(wrappedBuffer(dob.getData(), 0, dob.getLength()));
-      File spillfile = new File(mapOutputFileName.toString());
+      final File spillfile = new File(mapOutputFileName.toString());
       RandomAccessFile spill;
       try {
         spill = new RandomAccessFile(spillfile, "r");
@@ -483,6 +497,17 @@ public class ShuffleHandler extends AbstractService
         LOG.info(spillfile + " not found");
         return null;
       }
+      
+      final FileDescriptor fd = spill.getFD();
+      if (manageOsCache) {
+        try {
+          NativeIO.posixFadviseIfPossible(fd, info.startOffset, info.partLength,
+              NativeIO.POSIX_FADV_WILLNEED);
+        } catch (Throwable t) {
+          LOG.warn("Failed to manage OS cache for " + spillfile, t);
+        }
+      }
+
       final FileRegion partition = new DefaultFileRegion(
           spill.getChannel(), info.startOffset, info.partLength);
       ChannelFuture writeFuture = ch.write(partition);
@@ -491,6 +516,16 @@ public class ShuffleHandler extends AbstractService
           //      attribute to appropriate spill output
           @Override
           public void operationComplete(ChannelFuture future) {
+            if (manageOsCache) {
+              try {
+                NativeIO.posixFadviseIfPossible(fd,
+                    info.startOffset, info.partLength,
+                    NativeIO.POSIX_FADV_DONTNEED);
+              } catch (Throwable t) {
+                LOG.warn("Failed to manage OS cache for " + spillfile, t);
+              }
+            }
+
             partition.releaseExternalResources();
           }
         });
