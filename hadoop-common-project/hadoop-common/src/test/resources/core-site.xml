@@ -22,15 +22,6 @@
 <!-- user-editted core-site.xml in the conf/ directory.  -->
 
 <configuration>
-
-
-<property>
-  <name>hadoop.tmp.dir</name>
-  <value>build/test</value>
-  <description>A base for other temporary directories.</description>
-  <final>true</final>
-</property>
-
 <property>
   <name>test.fs.s3.name</name>
   <value>s3:///</value>
