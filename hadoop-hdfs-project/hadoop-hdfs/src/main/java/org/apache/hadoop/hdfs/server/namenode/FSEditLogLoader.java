@@ -179,9 +179,15 @@ public class FSEditLogLoader {
             " clientHolder " + addCloseOp.clientName +
             " clientMachine " + addCloseOp.clientMachine);
       }
+      // There are four cases here:
+      // 1. OP_ADD to create a new file
+      // 2. OP_ADD to update file blocks
+      // 3. OP_ADD to open file for append
+      // 4. OP_CLOSE to close the file
 
       // See if the file already exists (persistBlocks call)
       INodeFile oldFile = getINodeFile(fsDir, addCloseOp.path);
+      INodeFile newFile = oldFile;
       if (oldFile == null) { // this is OP_ADD on a new file
         // versions > 0 support per file replication
         // get name and replication
@@ -192,6 +198,9 @@ public class FSEditLogLoader {
           permissions = addCloseOp.permissions;
         }
         long blockSize = addCloseOp.blockSize;
+        
+        // TODO: we should add a sanity check that there are no blocks
+        // in this op, and simplify the code below!
         
         // Older versions of HDFS does not store the block size in inode.
         // If the file has more than one block, use the size of the
@@ -207,17 +216,14 @@ public class FSEditLogLoader {
           }
         }
 
-        // TODO: We should do away with this add-then-replace dance.
-
         // add to the file tree
-        INodeFile node = (INodeFile)fsDir.unprotectedAddFile(
+        newFile = (INodeFile)fsDir.unprotectedAddFile(
             addCloseOp.path, permissions,
             replication, addCloseOp.mtime,
-            addCloseOp.atime, blockSize);
+            addCloseOp.atime, blockSize,
+            true, addCloseOp.clientName, addCloseOp.clientMachine);
+        fsNamesys.leaseManager.addLease(addCloseOp.clientName, addCloseOp.path);
 
-        fsNamesys.prepareFileForWrite(addCloseOp.path, node,
-            addCloseOp.clientName, addCloseOp.clientMachine, null,
-            false);
       } else { // This is OP_ADD on an existing file
         if (!oldFile.isUnderConstruction()) {
           // This is a call to append() on an already-closed file.
@@ -228,11 +234,10 @@ public class FSEditLogLoader {
           fsNamesys.prepareFileForWrite(addCloseOp.path, oldFile,
               addCloseOp.clientName, addCloseOp.clientMachine, null,
               false);
-          oldFile = getINodeFile(fsDir, addCloseOp.path);
+          newFile = getINodeFile(fsDir, addCloseOp.path);
         }
-        
-        updateBlocks(fsDir, addCloseOp, oldFile);
       }
+      updateBlocks(fsDir, addCloseOp, newFile);
       break;
     }
     case OP_CLOSE: {

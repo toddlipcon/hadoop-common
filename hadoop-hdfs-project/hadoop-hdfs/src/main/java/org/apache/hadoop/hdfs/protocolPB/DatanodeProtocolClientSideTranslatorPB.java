@@ -63,9 +63,12 @@ import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.io.retry.RetryProxy;
 import org.apache.hadoop.ipc.ProtobufHelper;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
+import org.apache.hadoop.ipc.ProtocolMetaInterface;
 import org.apache.hadoop.ipc.ProtocolSignature;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RemoteException;
+import org.apache.hadoop.ipc.RpcClientUtil;
+import org.apache.hadoop.ipc.RpcPayloadHeader.RpcKind;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 
@@ -79,14 +82,14 @@ import com.google.protobuf.ServiceException;
  */
 @InterfaceAudience.Private
 @InterfaceStability.Stable
-public class DatanodeProtocolClientSideTranslatorPB implements DatanodeProtocol,
-    Closeable {
+public class DatanodeProtocolClientSideTranslatorPB implements
+    ProtocolMetaInterface, DatanodeProtocol, Closeable {
   
   /** RpcController is not used and hence is set to null */
-  private final static RpcController NULL_CONTROLLER = null;
   private final DatanodeProtocolPB rpcProxy;
   private static final VersionRequestProto VERSION_REQUEST = 
       VersionRequestProto.newBuilder().build();
+  private final static RpcController NULL_CONTROLLER = null;
   
   public DatanodeProtocolClientSideTranslatorPB(InetSocketAddress nameNodeAddr,
       Configuration conf) throws IOException {
@@ -300,5 +303,13 @@ public class DatanodeProtocolClientSideTranslatorPB implements DatanodeProtocol,
     } catch (ServiceException se) {
       throw ProtobufHelper.getRemoteException(se);
     }
+  }
+
+  @Override // ProtocolMetaInterface
+  public boolean isMethodSupported(String methodName)
+      throws IOException {
+    return RpcClientUtil.isMethodSupported(rpcProxy, DatanodeProtocolPB.class,
+        RpcKind.RPC_PROTOCOL_BUFFER,
+        RPC.getProtocolVersion(DatanodeProtocolPB.class), methodName);
   }
 }

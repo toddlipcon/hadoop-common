@@ -4449,7 +4449,12 @@ public class FSNamesystem implements Namesystem, FSClusterStats,
 
     if (destinationExisted && dinfo.isDir()) {
       Path spath = new Path(src);
-      overwrite = spath.getParent().toString() + Path.SEPARATOR;
+      Path parent = spath.getParent();
+      if (isRoot(parent)) {
+        overwrite = parent.toString();
+      } else {
+        overwrite = parent.toString() + Path.SEPARATOR;
+      }
       replaceBy = dst + Path.SEPARATOR;
     } else {
       overwrite = src;
@@ -4459,6 +4464,10 @@ public class FSNamesystem implements Namesystem, FSClusterStats,
     leaseManager.changeLease(src, dst, overwrite, replaceBy);
   }
            
+  private boolean isRoot(Path path) {
+    return path.getParent() == null;
+  }
+
   /**
    * Serializes leases. 
    */
@@ -4863,7 +4872,7 @@ public class FSNamesystem implements Namesystem, FSClusterStats,
    */
   @Override // NameNodeMXBean
   public String getVersion() {
-    return VersionInfo.getVersion();
+    return VersionInfo.getVersion() + ", r" + VersionInfo.getRevision();
   }
 
   @Override // NameNodeMXBean

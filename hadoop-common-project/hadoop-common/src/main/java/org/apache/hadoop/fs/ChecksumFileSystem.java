@@ -119,7 +119,6 @@ public abstract class ChecksumFileSystem extends FilterFileSystem {
     private static final int HEADER_LENGTH = 8;
     
     private int bytesPerSum = 1;
-    private long fileLen = -1L;
     
     public ChecksumFSInputChecker(ChecksumFileSystem fs, Path file)
       throws IOException {
@@ -244,6 +243,24 @@ public abstract class ChecksumFileSystem extends FilterFileSystem {
       }
       return nread;
     }
+  }
+  
+  private static class FSDataBoundedInputStream extends FSDataInputStream {
+    private FileSystem fs;
+    private Path file;
+    private long fileLen = -1L;
+
+    FSDataBoundedInputStream(FileSystem fs, Path file, InputStream in)
+        throws IOException {
+      super(in);
+      this.fs = fs;
+      this.file = file;
+    }
+    
+    @Override
+    public boolean markSupported() {
+      return false;
+    }
     
     /* Return the file length */
     private long getFileLength() throws IOException {
@@ -304,9 +321,16 @@ public abstract class ChecksumFileSystem extends FilterFileSystem {
    */
   @Override
   public FSDataInputStream open(Path f, int bufferSize) throws IOException {
-    return verifyChecksum
-      ? new FSDataInputStream(new ChecksumFSInputChecker(this, f, bufferSize))
-      : getRawFileSystem().open(f, bufferSize);
+    FileSystem fs;
+    InputStream in;
+    if (verifyChecksum) {
+      fs = this;
+      in = new ChecksumFSInputChecker(this, f, bufferSize);
+    } else {
+      fs = getRawFileSystem();
+      in = fs.open(f, bufferSize);
+    }
+    return new FSDataBoundedInputStream(fs, f, in);
   }
 
   /** {@inheritDoc} */
@@ -450,18 +474,21 @@ public abstract class ChecksumFileSystem extends FilterFileSystem {
     if (fs.isDirectory(src)) {
       return fs.rename(src, dst);
     } else {
+      if (fs.isDirectory(dst)) {
+        dst = new Path(dst, src.getName());
+      }
 
       boolean value = fs.rename(src, dst);
       if (!value)
         return false;
 
-      Path checkFile = getChecksumFile(src);
-      if (fs.exists(checkFile)) { //try to rename checksum
-        if (fs.isDirectory(dst)) {
-          value = fs.rename(checkFile, dst);
-        } else {
-          value = fs.rename(checkFile, getChecksumFile(dst));
-        }
+      Path srcCheckFile = getChecksumFile(src);
+      Path dstCheckFile = getChecksumFile(dst);
+      if (fs.exists(srcCheckFile)) { //try to rename checksum
+        value = fs.rename(srcCheckFile, dstCheckFile);
+      } else if (fs.exists(dstCheckFile)) {
+        // no src checksum, so remove dst checksum
+        value = fs.delete(dstCheckFile, true); 
       }
 
       return value;
