@@ -62,22 +62,36 @@ public class FSEditLog  {
 
   /**
    * State machine for edit log.
+   * 
+   * In a non-HA setup:
+   * 
    * The log starts in UNITIALIZED state upon construction. Once it's
-   * initialized, it is usually in IN_SEGMENT state, indicating that edits
-   * may be written. In the middle of a roll, or while saving the namespace,
-   * it briefly enters the BETWEEN_LOG_SEGMENTS state, indicating that the
-   * previous segment has been closed, but the new one has not yet been opened.
+   * initialized, it is usually in IN_SEGMENT state, indicating that edits may
+   * be written. In the middle of a roll, or while saving the namespace, it
+   * briefly enters the BETWEEN_LOG_SEGMENTS state, indicating that the previous
+   * segment has been closed, but the new one has not yet been opened.
+   * 
+   * In an HA setup:
+   * 
+   * The log starts in UNINITIALIZED state upon construction. Once it's
+   * initialized, it sits in the OPEN_FOR_READING state the entire time that the
+   * NN is in standby. Upon the NN transition to active, the log will be CLOSED,
+   * and then move to being BETWEEN_LOG_SEGMENTS, much as if the NN had just
+   * started up, and then will move to IN_SEGMENT so it can begin writing to the
+   * log. The log states will then revert to behaving as they do in a non-HA
+   * setup.
    */
   private enum State {
     UNINITIALIZED,
     BETWEEN_LOG_SEGMENTS,
     IN_SEGMENT,
+    OPEN_FOR_READING,
     CLOSED;
   }  
   private State state = State.UNINITIALIZED;
   
   //initialize
-  private JournalSet journalSet;
+  private JournalSet journalSet = null;
   private EditLogOutputStream editLogStream = null;
 
   // a monotonically increasing counter that represents transactionIds.
@@ -112,7 +126,12 @@ public class FSEditLog  {
   private NNStorage storage;
   private Configuration conf;
   
-  private Collection<URI> editsDirs;
+  private List<URI> editsDirs;
+  
+  /**
+   * The edit directories that are shared between primary and secondary.
+   */
+  private List<URI> sharedEditsDirs;
 
   private static class TransactionId {
     public long txid;
@@ -151,11 +170,11 @@ public class FSEditLog  {
    * @param storage Storage object used by namenode
    * @param editsDirs List of journals to use
    */
-  FSEditLog(Configuration conf, NNStorage storage, Collection<URI> editsDirs) {
+  FSEditLog(Configuration conf, NNStorage storage, List<URI> editsDirs) {
     init(conf, storage, editsDirs);
   }
   
-  private void init(Configuration conf, NNStorage storage, Collection<URI> editsDirs) {
+  private void init(Configuration conf, NNStorage storage, List<URI> editsDirs) {
     isSyncRunning = false;
     this.conf = conf;
     this.storage = storage;
@@ -165,13 +184,38 @@ public class FSEditLog  {
     // If this list is empty, an error will be thrown on first use
     // of the editlog, as no journals will exist
     this.editsDirs = Lists.newArrayList(editsDirs);
+
+    this.sharedEditsDirs = FSNamesystem.getSharedEditsDirs(conf);
+  }
+  
+  public void initJournalsForWrite() {
+    Preconditions.checkState(state == State.UNINITIALIZED ||
+        state == State.CLOSED, "Unexpected state: %s", state);
     
+    initJournals(this.editsDirs);
+    state = State.BETWEEN_LOG_SEGMENTS;
+  }
+  
+  public void initSharedJournalsForRead() {
+    if (state == State.OPEN_FOR_READING) {
+      LOG.warn("Initializing shared journals for READ, already open for READ",
+          new Exception());
+      return;
+    }
+    Preconditions.checkState(state == State.UNINITIALIZED ||
+        state == State.CLOSED);
+    
+    initJournals(this.sharedEditsDirs);
+    state = State.OPEN_FOR_READING;
+  }
+  
+  private void initJournals(List<URI> dirs) {
     int minimumRedundantJournals = conf.getInt(
         DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_MINIMUM_KEY,
         DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_MINIMUM_DEFAULT);
 
     journalSet = new JournalSet(minimumRedundantJournals);
-    for (URI u : this.editsDirs) {
+    for (URI u : dirs) {
       boolean required = FSNamesystem.getRequiredNamespaceEditsDirs(conf)
           .contains(u);
       if (u.getScheme().equals(NNStorage.LOCAL_URI_SCHEME)) {
@@ -187,7 +231,6 @@ public class FSEditLog  {
     if (journalSet.isEmpty()) {
       LOG.error("No edits directories configured!");
     } 
-    state = State.BETWEEN_LOG_SEGMENTS;
   }
 
   /**
@@ -202,15 +245,48 @@ public class FSEditLog  {
    * Initialize the output stream for logging, opening the first
    * log segment.
    */
-  synchronized void open() throws IOException {
-    Preconditions.checkState(state == State.BETWEEN_LOG_SEGMENTS);
+  synchronized void openForWrite() throws IOException {
+    Preconditions.checkState(state == State.BETWEEN_LOG_SEGMENTS,
+        "Bad state: %s", state);
 
-    startLogSegment(getLastWrittenTxId() + 1, true);
+    long segmentTxId = getLastWrittenTxId() + 1;
+    // Safety check: we should never start a segment if there are
+    // newer txids readable.
+    EditLogInputStream s = journalSet.getInputStream(segmentTxId, true);
+    try {
+      Preconditions.checkState(s == null,
+          "Cannot start writing at txid %s when there is a stream " +
+          "available for read: %s", segmentTxId, s);
+    } finally {
+      IOUtils.closeStream(s);
+    }
+    
+    startLogSegment(segmentTxId, true);
     assert state == State.IN_SEGMENT : "Bad state: " + state;
   }
   
-  synchronized boolean isOpen() {
+  /**
+   * @return true if the log is currently open in write mode, regardless
+   * of whether it actually has an open segment.
+   */
+  synchronized boolean isOpenForWrite() {
+    return state == State.IN_SEGMENT ||
+      state == State.BETWEEN_LOG_SEGMENTS;
+  }
+  
+  /**
+   * @return true if the log is open in write mode and has a segment open
+   * ready to take edits.
+   */
+  synchronized boolean isSegmentOpen() {
     return state == State.IN_SEGMENT;
+  }
+
+  /**
+   * @return true if the log is open in read mode.
+   */
+  public synchronized boolean isOpenForRead() {
+    return state == State.OPEN_FOR_READING;
   }
 
   /**
@@ -242,7 +318,8 @@ public class FSEditLog  {
    */
   void logEdit(final FSEditLogOp op) {
     synchronized (this) {
-      assert state != State.CLOSED;
+      assert isOpenForWrite() :
+        "bad state: " + state;
       
       // wait if an automatic sync is scheduled
       waitIfAutoSyncScheduled();
@@ -329,7 +406,7 @@ public class FSEditLog  {
   /**
    * Return the transaction ID of the last transaction written to the log.
    */
-  synchronized long getLastWrittenTxId() {
+  public synchronized long getLastWrittenTxId() {
     return txid;
   }
   
@@ -337,7 +414,7 @@ public class FSEditLog  {
    * @return the first transaction ID in the current log segment
    */
   synchronized long getCurSegmentTxId() {
-    Preconditions.checkState(state == State.IN_SEGMENT,
+    Preconditions.checkState(isSegmentOpen(),
         "Bad state: %s", state);
     return curSegmentTxId;
   }
@@ -788,7 +865,7 @@ public class FSEditLog  {
       editLogStream = journalSet.startLogSegment(segmentTxId);
     } catch (IOException ex) {
       throw new IOException("Unable to start log segment " +
-          segmentTxId + ": no journals successfully started.");
+          segmentTxId + ": too few journals successfully started.", ex);
     }
     
     curSegmentTxId = segmentTxId;
@@ -807,7 +884,7 @@ public class FSEditLog  {
    */
   synchronized void endCurrentLogSegment(boolean writeEndTxn) {
     LOG.info("Ending log segment " + curSegmentTxId);
-    Preconditions.checkState(state == State.IN_SEGMENT,
+    Preconditions.checkState(isSegmentOpen(),
         "Bad state: %s", state);
     
     if (writeEndTxn) {
@@ -839,6 +916,7 @@ public class FSEditLog  {
       if (editLogStream != null) {
         editLogStream.abort();
         editLogStream = null;
+        state = State.BETWEEN_LOG_SEGMENTS;
       }
     } catch (IOException e) {
       LOG.warn("All journals failed to abort", e);
@@ -968,31 +1046,44 @@ public class FSEditLog  {
    * Run recovery on all journals to recover any unclosed segments
    */
   void recoverUnclosedStreams() {
+    Preconditions.checkState(
+        state == State.BETWEEN_LOG_SEGMENTS,
+        "May not recover segments - wrong state: %s", state);
     try {
       journalSet.recoverUnfinalizedSegments();
     } catch (IOException ex) {
       // All journals have failed, it is handled in logSync.
     }
   }
+  
+  Collection<EditLogInputStream> selectInputStreams(long fromTxId,
+      long toAtLeastTxId) throws IOException {
+    return selectInputStreams(fromTxId, toAtLeastTxId, true);
+  }
 
   /**
    * Select a list of input streams to load.
+   * 
    * @param fromTxId first transaction in the selected streams
    * @param toAtLeast the selected streams must contain this transaction
+   * @param inProgessOk set to true if in-progress streams are OK
    */
-  Collection<EditLogInputStream> selectInputStreams(long fromTxId,
-      long toAtLeastTxId) throws IOException {
+  public Collection<EditLogInputStream> selectInputStreams(long fromTxId,
+      long toAtLeastTxId, boolean inProgressOk) throws IOException {
     List<EditLogInputStream> streams = new ArrayList<EditLogInputStream>();
-    EditLogInputStream stream = journalSet.getInputStream(fromTxId);
+    EditLogInputStream stream = journalSet.getInputStream(fromTxId, inProgressOk);
     while (stream != null) {
-      fromTxId = stream.getLastTxId() + 1;
       streams.add(stream);
-      stream = journalSet.getInputStream(fromTxId);
+      // We're now looking for a higher range, so reset the fromTxId
+      fromTxId = stream.getLastTxId() + 1;
+      stream = journalSet.getInputStream(fromTxId, inProgressOk);
     }
+    
     if (fromTxId <= toAtLeastTxId) {
       closeAllStreams(streams);
-      throw new IOException("No non-corrupt logs for txid " 
-                            + fromTxId);
+      throw new IOException(String.format("Gap in transactions. Expected to "
+          + "be able to read up until at least txid %d but unable to find any "
+          + "edit logs containing txid %d", toAtLeastTxId, fromTxId));
     }
     return streams;
   }

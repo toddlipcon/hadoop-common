@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 import org.apache.commons.logging.Log;
@@ -34,6 +35,7 @@ import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.MiniDFSNNTopology;
 import org.apache.hadoop.hdfs.protocol.Block;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
@@ -157,7 +159,8 @@ public class TestBalancerWithMultipleNameNodes {
     LOG.info("BALANCER 1");
 
     // start rebalancing
-    final List<InetSocketAddress> namenodes = DFSUtil.getNNServiceRpcAddresses(s.conf);
+    final Map<String, Map<String, InetSocketAddress>> namenodes =
+      DFSUtil.getNNServiceRpcAddresses(s.conf);
     final int r = Balancer.run(namenodes, Balancer.Parameters.DEFALUT, s.conf);
     Assert.assertEquals(Balancer.ReturnStatus.SUCCESS.code, r);
 
@@ -252,7 +255,7 @@ public class TestBalancerWithMultipleNameNodes {
     {
       LOG.info("UNEVEN 1");
       final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-          .numNameNodes(nNameNodes)
+          .nnTopology(MiniDFSNNTopology.simpleFederatedTopology(2))
           .numDataNodes(nDataNodes)
           .racks(racks)
           .simulatedCapacities(capacities)
@@ -273,7 +276,7 @@ public class TestBalancerWithMultipleNameNodes {
     {
       LOG.info("UNEVEN 10");
       final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-          .numNameNodes(nNameNodes)
+          .nnTopology(MiniDFSNNTopology.simpleFederatedTopology(nNameNodes))
           .numDataNodes(nDataNodes)
           .racks(racks)
           .simulatedCapacities(capacities)
@@ -327,7 +330,7 @@ public class TestBalancerWithMultipleNameNodes {
 
     LOG.info("RUN_TEST -1");
     final MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
-        .numNameNodes(nNameNodes)
+        .nnTopology(MiniDFSNNTopology.simpleFederatedTopology(nNameNodes))
         .numDataNodes(nDataNodes)
         .racks(racks)
         .simulatedCapacities(capacities)

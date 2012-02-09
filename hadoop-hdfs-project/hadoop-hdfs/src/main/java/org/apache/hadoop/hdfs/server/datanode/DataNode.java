@@ -48,7 +48,6 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_SIMULATEDDATASTO
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_STARTUP_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_STORAGEID_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_DATANODE_USER_NAME_KEY;
-import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_FEDERATION_NAMESERVICES;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_HTTPS_ENABLE_KEY;
 
 import java.io.BufferedOutputStream;
@@ -89,6 +88,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSUtil;
+import org.apache.hadoop.hdfs.DFSUtil.ConfiguredNNAddress;
 import org.apache.hadoop.hdfs.HDFSPolicyProvider;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.protocol.Block;
@@ -169,6 +169,7 @@ import org.apache.hadoop.util.VersionInfo;
 import org.mortbay.util.ajax.JSON;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Sets;
 import com.google.protobuf.BlockingService;
 
 
@@ -233,143 +234,6 @@ public class DataNode extends Configured
   @Deprecated
   public static InetSocketAddress createSocketAddr(String target) {
     return NetUtils.createSocketAddr(target);
-  }
-  
-  /**
-   * Manages he BPOfferService objects for the data node.
-   * Creation, removal, starting, stopping, shutdown on BPOfferService
-   * objects must be done via APIs in this class.
-   */
-  @InterfaceAudience.Private
-  class BlockPoolManager {
-    private final Map<String, BPOfferService> bpMapping;
-    private final Map<InetSocketAddress, BPOfferService> nameNodeThreads;
- 
-    //This lock is used only to ensure exclusion of refreshNamenodes
-    private final Object refreshNamenodesLock = new Object();
-    
-    BlockPoolManager(Configuration conf)
-        throws IOException {
-      bpMapping = new HashMap<String, BPOfferService>();
-      nameNodeThreads = new HashMap<InetSocketAddress, BPOfferService>();
-  
-      List<InetSocketAddress> isas = DFSUtil.getNNServiceRpcAddresses(conf);
-      for(InetSocketAddress isa : isas) {
-        BPOfferService bpos = new BPOfferService(isa, DataNode.this);
-        nameNodeThreads.put(bpos.getNNSocketAddress(), bpos);
-      }
-    }
-    
-    synchronized void addBlockPool(BPOfferService t) {
-      if (nameNodeThreads.get(t.getNNSocketAddress()) == null) {
-        throw new IllegalArgumentException(
-            "Unknown BPOfferService thread for namenode address:"
-                + t.getNNSocketAddress());
-      }
-      if (t.getBlockPoolId() == null) {
-        throw new IllegalArgumentException("Null blockpool id");
-      }
-      bpMapping.put(t.getBlockPoolId(), t);
-    }
-    
-    /**
-     * Returns the array of BPOfferService objects. 
-     * Caution: The BPOfferService returned could be shutdown any time.
-     */
-    synchronized BPOfferService[] getAllNamenodeThreads() {
-      BPOfferService[] bposArray = new BPOfferService[nameNodeThreads.values()
-          .size()];
-      return nameNodeThreads.values().toArray(bposArray);
-    }
-    
-    synchronized BPOfferService get(InetSocketAddress addr) {
-      return nameNodeThreads.get(addr);
-    }
-    
-    synchronized BPOfferService get(String bpid) {
-      return bpMapping.get(bpid);
-    }
-    
-    synchronized void remove(BPOfferService t) {
-      nameNodeThreads.remove(t.getNNSocketAddress());
-      bpMapping.remove(t.getBlockPoolId());
-    }
-    
-    void shutDownAll() throws InterruptedException {
-      BPOfferService[] bposArray = this.getAllNamenodeThreads();
-      
-      for (BPOfferService bpos : bposArray) {
-        bpos.stop(); //interrupts the threads
-      }
-      //now join
-      for (BPOfferService bpos : bposArray) {
-        bpos.join();
-      }
-    }
-    
-    synchronized void startAll() throws IOException {
-      try {
-        UserGroupInformation.getLoginUser().doAs(
-            new PrivilegedExceptionAction<Object>() {
-              public Object run() throws Exception {
-                for (BPOfferService bpos : nameNodeThreads.values()) {
-                  bpos.start();
-                }
-                return null;
-              }
-            });
-      } catch (InterruptedException ex) {
-        IOException ioe = new IOException();
-        ioe.initCause(ex.getCause());
-        throw ioe;
-      }
-    }
-    
-    void joinAll() {
-      for (BPOfferService bpos: this.getAllNamenodeThreads()) {
-        bpos.join();
-      }
-    }
-    
-    void refreshNamenodes(Configuration conf)
-        throws IOException {
-      LOG.info("Refresh request received for nameservices: "
-          + conf.get(DFS_FEDERATION_NAMESERVICES));
-      List<InetSocketAddress> newAddresses = 
-        DFSUtil.getNNServiceRpcAddresses(conf);
-      List<BPOfferService> toShutdown = new ArrayList<BPOfferService>();
-      List<InetSocketAddress> toStart = new ArrayList<InetSocketAddress>();
-      synchronized (refreshNamenodesLock) {
-        synchronized (this) {
-          for (InetSocketAddress nnaddr : nameNodeThreads.keySet()) {
-            if (!(newAddresses.contains(nnaddr))) {
-              toShutdown.add(nameNodeThreads.get(nnaddr));
-            }
-          }
-          for (InetSocketAddress nnaddr : newAddresses) {
-            if (!(nameNodeThreads.containsKey(nnaddr))) {
-              toStart.add(nnaddr);
-            }
-          }
-
-          for (InetSocketAddress nnaddr : toStart) {
-            BPOfferService bpos = new BPOfferService(nnaddr, DataNode.this);
-            nameNodeThreads.put(bpos.getNNSocketAddress(), bpos);
-          }
-        }
-
-        for (BPOfferService bpos : toShutdown) {
-          bpos.stop();
-          bpos.join();
-        }
-        
-        // stoping the BPOSes causes them to call remove() on their own when they
-        // clean up.
-        
-        // Now start the threads that are not already running.
-        startAll();
-      }
-    }
   }
   
   volatile boolean shouldRun = true;
@@ -657,7 +521,18 @@ public class DataNode extends Configured
     if(bpos != null) {
       bpos.notifyNamenodeReceivedBlock(block, delHint); 
     } else {
-      LOG.warn("Cannot find BPOfferService for reporting block received for bpid="
+      LOG.error("Cannot find BPOfferService for reporting block received for bpid="
+          + block.getBlockPoolId());
+    }
+  }
+  
+  // calls specific to BP
+  protected void notifyNamenodeReceivingBlock(ExtendedBlock block) {
+    BPOfferService bpos = blockPoolManager.get(block.getBlockPoolId());
+    if(bpos != null) {
+      bpos.notifyNamenodeReceivingBlock(block); 
+    } else {
+      LOG.error("Cannot find BPOfferService for reporting block receiving for bpid="
           + block.getBlockPoolId());
     }
   }
@@ -668,18 +543,49 @@ public class DataNode extends Configured
     if (bpos != null) {
       bpos.notifyNamenodeDeletedBlock(block);
     } else {
-      LOG.warn("Cannot find BPOfferService for reporting block deleted for bpid="
+      LOG.error("Cannot find BPOfferService for reporting block deleted for bpid="
           + block.getBlockPoolId());
     }
   }
   
+  /**
+   * Report a bad block which is hosted on the local DN.
+   */
   public void reportBadBlocks(ExtendedBlock block) throws IOException{
-    BPOfferService bpos = blockPoolManager.get(block.getBlockPoolId());
-    if(bpos == null || bpos.bpNamenode == null) {
-      throw new IOException("cannot locate OfferService thread for bp="+block.getBlockPoolId());
-    }
+    BPOfferService bpos = getBPOSForBlock(block);
     bpos.reportBadBlocks(block);
   }
+
+  /**
+   * Report a bad block on another DN (eg if we received a corrupt replica
+   * from a remote host).
+   * @param srcDataNode the DN hosting the bad block
+   * @param block the block itself
+   */
+  public void reportRemoteBadBlock(DatanodeInfo srcDataNode, ExtendedBlock block)
+      throws IOException {
+    BPOfferService bpos = getBPOSForBlock(block);
+    bpos.reportRemoteBadBlock(srcDataNode, block);
+  }
+  
+  /**
+   * Return the BPOfferService instance corresponding to the given block.
+   * @param block
+   * @return the BPOS
+   * @throws IOException if no such BPOS can be found
+   */
+  private BPOfferService getBPOSForBlock(ExtendedBlock block)
+      throws IOException {
+    Preconditions.checkNotNull(block);
+    BPOfferService bpos = blockPoolManager.get(block.getBlockPoolId());
+    if (bpos == null) {
+      throw new IOException("cannot locate OfferService thread for bp="+
+          block.getBlockPoolId());
+    }
+    return bpos;
+  }
+
+
   
   // used only for testing
   void setHeartbeatsDisabledForTests(
@@ -729,7 +635,8 @@ public class DataNode extends Configured
 
     metrics = DataNodeMetrics.create(conf, getMachineName());
 
-    blockPoolManager = new BlockPoolManager(conf);
+    blockPoolManager = new BlockPoolManager(this);
+    blockPoolManager.refreshNamenodes(conf);
   }
   
   /**
@@ -994,11 +901,15 @@ public class DataNode extends Configured
   
   /**
    * get BP registration by machine and port name (host:port)
-   * @param mName
+   * @param mName - the name that the NN used
    * @return BP registration 
    * @throws IOException 
    */
   DatanodeRegistration getDNRegistrationByMachineName(String mName) {
+    // TODO: all the BPs should have the same name as each other, they all come
+    // from getName() here! and the use cases only are in tests where they just
+    // call with getName(). So we could probably just make this method return
+    // the first BPOS's registration
     BPOfferService [] bposArray = blockPoolManager.getAllNamenodeThreads();
     for (BPOfferService bpos : bposArray) {
       if(bpos.bpRegistration.getName().equals(mName))
@@ -1043,6 +954,8 @@ public class DataNode extends Configured
    * @return namenode address corresponding to the bpid
    */
   public InetSocketAddress getNameNodeAddr(String bpid) {
+    // TODO(HA) this function doesn't make sense! used by upgrade code
+    // Should it return just the active one or simply return the BPService.
     BPOfferService bp = blockPoolManager.get(bpid);
     if (bp != null) {
       return bp.getNNSocketAddress();
@@ -1276,12 +1189,7 @@ public class DataNode extends Configured
 
     //inform NameNodes
     for(BPOfferService bpos: blockPoolManager.getAllNamenodeThreads()) {
-      DatanodeProtocolClientSideTranslatorPB nn = bpos.bpNamenode;
-      try {
-        nn.errorReport(bpos.bpRegistration, dpError, errMsgr);
-      } catch(IOException e) {
-        LOG.warn("Error reporting disk failure to NameNode", e);
-      }
+      bpos.trySendErrorReport(dpError, errMsgr);
     }
     
     if(hasEnoughResources) {
@@ -1298,6 +1206,10 @@ public class DataNode extends Configured
   public int getXceiverCount() {
     return threadGroup == null ? 0 : threadGroup.activeCount();
   }
+  
+  int getXmitsInProgress() {
+    return xmitsInProgress.get();
+  }
     
   UpgradeManagerDatanode getUpgradeManagerDatanode(String bpid) {
     BPOfferService bpos = blockPoolManager.get(bpid);
@@ -1310,15 +1222,15 @@ public class DataNode extends Configured
   private void transferBlock( ExtendedBlock block, 
                               DatanodeInfo xferTargets[] 
                               ) throws IOException {
-    DatanodeProtocolClientSideTranslatorPB nn = getBPNamenode(block
-        .getBlockPoolId());
+    BPOfferService bpos = getBPOSForBlock(block);
     DatanodeRegistration bpReg = getDNRegistrationForBP(block.getBlockPoolId());
     
     if (!data.isValidBlock(block)) {
       // block does not exist or is under-construction
       String errStr = "Can't send invalid block " + block;
       LOG.info(errStr);
-      nn.errorReport(bpReg, DatanodeProtocol.INVALID_BLOCK, errStr);
+      
+      bpos.trySendErrorReport(DatanodeProtocol.INVALID_BLOCK, errStr);
       return;
     }
 
@@ -1326,9 +1238,7 @@ public class DataNode extends Configured
     long onDiskLength = data.getLength(block);
     if (block.getNumBytes() > onDiskLength) {
       // Shorter on-disk len indicates corruption so report NN the corrupt block
-      nn.reportBadBlocks(new LocatedBlock[]{
-          new LocatedBlock(block, new DatanodeInfo[] {
-              new DatanodeInfo(bpReg)})});
+      bpos.reportBadBlocks(block);
       LOG.warn("Can't replicate block " + block
           + " because on-disk length " + onDiskLength 
           + " is shorter than NameNode recorded length " + block.getNumBytes());
@@ -1982,10 +1892,10 @@ public class DataNode extends Configured
   public DatanodeProtocolClientSideTranslatorPB getBPNamenode(String bpid)
       throws IOException {
     BPOfferService bpos = blockPoolManager.get(bpid);
-    if(bpos == null || bpos.bpNamenode == null) {
+    if (bpos == null) {
       throw new IOException("cannot find a namnode proxy for bpid=" + bpid);
     }
-    return bpos.bpNamenode;
+    return bpos.getActiveNN();
   }
 
   /** Block synchronization */
@@ -2005,6 +1915,7 @@ public class DataNode extends Configured
     // or their replicas have 0 length.
     // The block can be deleted.
     if (syncList.isEmpty()) {
+      // TODO: how does this work in HA??
       nn.commitBlockSynchronization(block, recoveryId, 0,
           true, true, DatanodeID.EMPTY_ARRAY);
       return;
@@ -2220,7 +2131,7 @@ public class DataNode extends Configured
   public String getNamenodeAddresses() {
     final Map<String, String> info = new HashMap<String, String>();
     for (BPOfferService bpos : blockPoolManager.getAllNamenodeThreads()) {
-      if (bpos != null && bpos.bpThread != null) {
+      if (bpos != null) {
         info.put(bpos.getNNSocketAddress().getHostName(), bpos.getBlockPoolId());
       }
     }

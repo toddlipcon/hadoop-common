@@ -39,6 +39,7 @@ import org.apache.hadoop.hdfs.server.namenode.NotReplicatedYetException;
 import org.apache.hadoop.hdfs.server.namenode.SafeModeException;
 import org.apache.hadoop.io.EnumSetWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.retry.Idempotent;
 import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.KerberosInfo;
@@ -115,6 +116,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException If <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public LocatedBlocks getBlockLocations(String src,
                                          long offset,
                                          long length) 
@@ -126,6 +128,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @return a set of server default configuration values
    * @throws IOException
    */
+  @Idempotent
   public FsServerDefaults getServerDefaults() throws IOException;
 
   /**
@@ -229,6 +232,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public boolean setReplication(String src, short replication)
       throws AccessControlException, DSQuotaExceededException,
       FileNotFoundException, SafeModeException, UnresolvedLinkException,
@@ -243,6 +247,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException If <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public void setPermission(String src, FsPermission permission)
       throws AccessControlException, FileNotFoundException, SafeModeException,
       UnresolvedLinkException, IOException;
@@ -260,12 +265,13 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException If <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public void setOwner(String src, String username, String groupname)
       throws AccessControlException, FileNotFoundException, SafeModeException,
       UnresolvedLinkException, IOException;
 
   /**
-   * The client can give up on a blcok by calling abandonBlock().
+   * The client can give up on a block by calling abandonBlock().
    * The client can then
    * either obtain a new block, or complete or abandon the file.
    * Any partial writes to the block will be discarded.
@@ -332,6 +338,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException If <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public LocatedBlock getAdditionalDatanode(final String src, final ExtendedBlock blk,
       final DatanodeInfo[] existings, final DatanodeInfo[] excludes,
       final int numAdditionalNodes, final String clientName
@@ -369,6 +376,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * locations on datanodes).
    * @param blocks Array of located blocks to report
    */
+  @Idempotent
   public void reportBadBlocks(LocatedBlock[] blocks) throws IOException;
 
   ///////////////////////////////////////
@@ -483,6 +491,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * RunTimeExceptions:
    * @throws InvalidPathException If <code>src</code> is invalid
    */
+  @Idempotent
   public boolean mkdirs(String src, FsPermission masked, boolean createParent)
       throws AccessControlException, FileAlreadyExistsException,
       FileNotFoundException, NSQuotaExceededException,
@@ -503,6 +512,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException If <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public DirectoryListing getListing(String src,
                                      byte[] startAfter,
                                      boolean needLocation)
@@ -532,6 +542,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws AccessControlException permission denied
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public void renewLease(String clientName) throws AccessControlException,
       IOException;
 
@@ -544,6 +555,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @return true if the file is already closed
    * @throws IOException
    */
+  @Idempotent
   public boolean recoverLease(String src, String clientName) throws IOException;
 
   public int GET_STATS_CAPACITY_IDX = 0;
@@ -555,7 +567,7 @@ public interface ClientProtocol extends VersionedProtocol {
   
   /**
    * Get a set of statistics about the filesystem.
-   * Right now, only three values are returned.
+   * Right now, only seven values are returned.
    * <ul>
    * <li> [0] contains the total storage capacity of the system, in bytes.</li>
    * <li> [1] contains the total used space of the system, in bytes.</li>
@@ -568,6 +580,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * Use public constants like {@link #GET_STATS_CAPACITY_IDX} in place of 
    * actual numbers to index into the array.
    */
+  @Idempotent
   public long[] getStats() throws IOException;
 
   /**
@@ -576,6 +589,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * Return live datanodes if type is LIVE; dead datanodes if type is DEAD;
    * otherwise all datanodes if type is ALL.
    */
+  @Idempotent
   public DatanodeInfo[] getDatanodeReport(HdfsConstants.DatanodeReportType type)
       throws IOException;
 
@@ -586,6 +600,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws IOException
    * @throws UnresolvedLinkException if the path contains a symlink. 
    */
+  @Idempotent
   public long getPreferredBlockSize(String filename) 
       throws IOException, UnresolvedLinkException;
 
@@ -679,6 +694,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * 
    * @throws IOException
    */
+  //TODO(HA): Should this be @Idempotent?
   public void finalizeUpgrade() throws IOException;
 
   /**
@@ -688,6 +704,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @return upgrade status information or null if no upgrades are in progress
    * @throws IOException
    */
+  //TODO(HA): Should this be @Idempotent?
   public UpgradeStatusReport distributedUpgradeProgress(UpgradeAction action) 
       throws IOException;
 
@@ -701,9 +718,9 @@ public interface ClientProtocol extends VersionedProtocol {
    * all corrupt files, call this method repeatedly and each time pass in the
    * cookie returned from the previous call.
    */
-  public CorruptFileBlocks
-    listCorruptFileBlocks(String path, String cookie)
-    throws IOException;
+  @Idempotent
+  public CorruptFileBlocks listCorruptFileBlocks(String path, String cookie)
+      throws IOException;
   
   /**
    * Dumps namenode data structures into specified file. If the file
@@ -720,6 +737,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @param bandwidth Blanacer bandwidth in bytes per second for this datanode.
    * @throws IOException
    */
+  //TODO(HA): Should this be @Idempotent?
   public void setBalancerBandwidth(long bandwidth) throws IOException;
   
   /**
@@ -733,6 +751,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if the path contains a symlink. 
    * @throws IOException If an I/O error occurred        
    */
+  @Idempotent
   public HdfsFileStatus getFileInfo(String src) throws AccessControlException,
       FileNotFoundException, UnresolvedLinkException, IOException;
 
@@ -748,6 +767,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if <code>src</code> contains a symlink
    * @throws IOException If an I/O error occurred        
    */
+  @Idempotent
   public HdfsFileStatus getFileLinkInfo(String src)
       throws AccessControlException, UnresolvedLinkException, IOException;
   
@@ -760,6 +780,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if <code>path</code> contains a symlink. 
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public ContentSummary getContentSummary(String path)
       throws AccessControlException, FileNotFoundException,
       UnresolvedLinkException, IOException;
@@ -785,6 +806,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if the <code>path</code> contains a symlink. 
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public void setQuota(String path, long namespaceQuota, long diskspaceQuota)
       throws AccessControlException, FileNotFoundException,
       UnresolvedLinkException, IOException;
@@ -800,6 +822,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if <code>src</code> contains a symlink. 
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public void fsync(String src, String client) 
       throws AccessControlException, FileNotFoundException, 
       UnresolvedLinkException, IOException;
@@ -819,6 +842,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws UnresolvedLinkException if <code>src</code> contains a symlink. 
    * @throws IOException If an I/O error occurred
    */
+  @Idempotent
   public void setTimes(String src, long mtime, long atime)
       throws AccessControlException, FileNotFoundException, 
       UnresolvedLinkException, IOException;
@@ -859,6 +883,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @throws IOException If the given path does not refer to a symlink
    *           or an I/O error occurred
    */
+  @Idempotent
   public String getLinkTarget(String path) throws AccessControlException,
       FileNotFoundException, IOException; 
   
@@ -874,6 +899,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @return a located block with a new generation stamp and an access token
    * @throws IOException if any error occurs
    */
+  @Idempotent
   public LocatedBlock updateBlockForPipeline(ExtendedBlock block,
       String clientName) throws IOException;
 
@@ -897,6 +923,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @return Token<DelegationTokenIdentifier>
    * @throws IOException
    */
+  @Idempotent
   public Token<DelegationTokenIdentifier> getDelegationToken(Text renewer) 
       throws IOException;
 
@@ -907,6 +934,7 @@ public interface ClientProtocol extends VersionedProtocol {
    * @return the new expiration time
    * @throws IOException
    */
+  @Idempotent
   public long renewDelegationToken(Token<DelegationTokenIdentifier> token)
       throws IOException;
   

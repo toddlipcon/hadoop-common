@@ -25,21 +25,23 @@ import java.util.concurrent.CountDownLatch;
 import org.apache.hadoop.io.retry.UnreliableImplementation.TypeOfExceptionToFailWith;
 import org.apache.hadoop.io.retry.UnreliableInterface.UnreliableException;
 import org.apache.hadoop.ipc.StandbyException;
+import org.apache.hadoop.util.ThreadUtil;
 import org.junit.Test;
 
+@SuppressWarnings("unchecked")
 public class TestFailoverProxy {
 
-  public static class FlipFlopProxyProvider implements FailoverProxyProvider {
+  public static class FlipFlopProxyProvider<T> implements FailoverProxyProvider<T> {
     
-    private Class<?> iface;
-    private Object currentlyActive;
-    private Object impl1;
-    private Object impl2;
+    private Class<T> iface;
+    private T currentlyActive;
+    private T impl1;
+    private T impl2;
     
     private int failoversOccurred = 0;
     
-    public FlipFlopProxyProvider(Class<?> iface, Object activeImpl,
-        Object standbyImpl) {
+    public FlipFlopProxyProvider(Class<T> iface, T activeImpl,
+        T standbyImpl) {
       this.iface = iface;
       this.impl1 = activeImpl;
       this.impl2 = standbyImpl;
@@ -47,7 +49,7 @@ public class TestFailoverProxy {
     }
     
     @Override
-    public Object getProxy() {
+    public T getProxy() {
       return currentlyActive;
     }
 
@@ -58,7 +60,7 @@ public class TestFailoverProxy {
     }
 
     @Override
-    public Class<?> getInterface() {
+    public Class<T> getInterface() {
       return iface;
     }
 
@@ -180,7 +182,7 @@ public class TestFailoverProxy {
     
     assertEquals("impl1", unreliable.succeedsOnceThenFailsReturningString());
     try {
-      assertEquals("impl2", unreliable.succeedsOnceThenFailsReturningString());
+      unreliable.succeedsOnceThenFailsReturningString();
       fail("should not have succeeded twice");
     } catch (IOException e) {
       // Make sure we *don't* fail over since the first implementation threw an
@@ -266,5 +268,63 @@ public class TestFailoverProxy {
     assertEquals("impl2", t1.result);
     assertEquals("impl2", t2.result);
     assertEquals(1, proxyProvider.getFailoversOccurred());
+  }
+
+  /**
+   * Ensure that when all configured services are throwing StandbyException
+   * that we fail over back and forth between them until one is no longer
+   * throwing StandbyException.
+   */
+  @Test
+  public void testFailoverBetweenMultipleStandbys()
+      throws UnreliableException, StandbyException, IOException {
+    
+    final long millisToSleep = 10000;
+    
+    final UnreliableImplementation impl1 = new UnreliableImplementation("impl1",
+        TypeOfExceptionToFailWith.STANDBY_EXCEPTION);
+    FlipFlopProxyProvider proxyProvider = new FlipFlopProxyProvider(
+        UnreliableInterface.class,
+        impl1,
+        new UnreliableImplementation("impl2",
+            TypeOfExceptionToFailWith.STANDBY_EXCEPTION));
+    
+    final UnreliableInterface unreliable = (UnreliableInterface)RetryProxy
+      .create(UnreliableInterface.class, proxyProvider,
+          RetryPolicies.failoverOnNetworkException(
+              RetryPolicies.TRY_ONCE_THEN_FAIL, 10, 1000, 10000));
+    
+    new Thread() {
+      @Override
+      public void run() {
+        ThreadUtil.sleepAtLeastIgnoreInterrupts(millisToSleep);
+        impl1.setIdentifier("renamed-impl1");
+      }
+    }.start();
+    
+    String result = unreliable.failsIfIdentifierDoesntMatch("renamed-impl1");
+    assertEquals("renamed-impl1", result);
+  }
+  
+  /**
+   * Ensure that normal IO exceptions don't result in a failover.
+   */
+  @Test
+  public void testExpectedIOException() {
+    UnreliableInterface unreliable = (UnreliableInterface)RetryProxy
+    .create(UnreliableInterface.class,
+        new FlipFlopProxyProvider(UnreliableInterface.class,
+          new UnreliableImplementation("impl1", TypeOfExceptionToFailWith.REMOTE_EXCEPTION),
+          new UnreliableImplementation("impl2", TypeOfExceptionToFailWith.UNRELIABLE_EXCEPTION)),
+          RetryPolicies.failoverOnNetworkException(
+              RetryPolicies.TRY_ONCE_THEN_FAIL, 10, 1000, 10000));
+    
+    try {
+      unreliable.failsIfIdentifierDoesntMatch("no-such-identifier");
+      fail("Should have thrown *some* exception");
+    } catch (Exception e) {
+      assertTrue("Expected IOE but got " + e.getClass(),
+          e instanceof IOException);
+    }
   }
 }

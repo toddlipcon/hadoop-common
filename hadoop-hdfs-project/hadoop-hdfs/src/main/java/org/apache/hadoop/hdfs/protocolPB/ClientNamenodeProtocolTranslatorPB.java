@@ -63,6 +63,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.retry.RetryPolicies;
 import org.apache.hadoop.io.retry.RetryPolicy;
 import org.apache.hadoop.io.retry.RetryProxy;
+import org.apache.hadoop.ipc.ProtocolTranslator;
 import org.apache.hadoop.ipc.ProtobufHelper;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.ProtocolMetaInterface;
@@ -139,7 +140,7 @@ import com.google.protobuf.ServiceException;
 @InterfaceAudience.Private
 @InterfaceStability.Stable
 public class ClientNamenodeProtocolTranslatorPB implements
-    ProtocolMetaInterface, ClientProtocol, Closeable {
+    ProtocolMetaInterface, ClientProtocol, Closeable, ProtocolTranslator {
   final private ClientNamenodeProtocolPB rpcProxy;
 
   private static ClientNamenodeProtocolPB createNamenode(
@@ -881,5 +882,10 @@ public class ClientNamenodeProtocolTranslatorPB implements
     return RpcClientUtil.isMethodSupported(rpcProxy,
         ClientNamenodeProtocolPB.class, RpcKind.RPC_PROTOCOL_BUFFER,
         RPC.getProtocolVersion(ClientNamenodeProtocolPB.class), methodName);
+  }
+
+  @Override
+  public Object getUnderlyingProxyObject() {
+    return rpcProxy;
   }
 }

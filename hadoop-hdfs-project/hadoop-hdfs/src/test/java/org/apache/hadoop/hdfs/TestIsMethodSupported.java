@@ -49,7 +49,7 @@ public class TestIsMethodSupported {
   
   @BeforeClass
   public static void setUp() throws Exception {
-    cluster = (new MiniDFSCluster.Builder(conf)).numNameNodes(1)
+    cluster = (new MiniDFSCluster.Builder(conf))
         .numDataNodes(1).build();
     nnAddress = cluster.getNameNode().getNameNodeAddress();
     dnAddress = new InetSocketAddress(cluster.getDataNodes().get(0)

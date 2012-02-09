@@ -225,6 +225,8 @@ public class Client {
     private int maxIdleTime; //connections will be culled if it was idle for 
     //maxIdleTime msecs
     private int maxRetries; //the max. no. of retries for socket connections
+    // the max. no. of retries for socket connections on time out exceptions
+    private int maxRetriesOnSocketTimeouts;
     private boolean tcpNoDelay; // if T then disable Nagle's Algorithm
     private boolean doPing; //do we need to send ping message
     private int pingInterval; // how often sends ping to the server in msecs
@@ -248,6 +250,7 @@ public class Client {
       this.rpcTimeout = remoteId.getRpcTimeout();
       this.maxIdleTime = remoteId.getMaxIdleTime();
       this.maxRetries = remoteId.getMaxRetries();
+      this.maxRetriesOnSocketTimeouts = remoteId.getMaxRetriesOnSocketTimeouts();
       this.tcpNoDelay = remoteId.getTcpNoDelay();
       this.doPing = remoteId.getDoPing();
       this.pingInterval = remoteId.getPingInterval();
@@ -476,11 +479,8 @@ public class Client {
           if (updateAddress()) {
             timeoutFailures = ioFailures = 0;
           }
-          /*
-           * The max number of retries is 45, which amounts to 20s*45 = 15
-           * minutes retries.
-           */
-          handleConnectionFailure(timeoutFailures++, 45, toe);
+          handleConnectionFailure(timeoutFailures++,
+              maxRetriesOnSocketTimeouts, toe);
         } catch (IOException ie) {
           if (updateAddress()) {
             timeoutFailures = ioFailures = 0;
@@ -1264,6 +1264,8 @@ public class Client {
     private int maxIdleTime; //connections will be culled if it was idle for 
     //maxIdleTime msecs
     private int maxRetries; //the max. no. of retries for socket connections
+    // the max. no. of retries for socket connections on time out exceptions
+    private int maxRetriesOnSocketTimeouts;
     private boolean tcpNoDelay; // if T then disable Nagle's Algorithm
     private boolean doPing; //do we need to send ping message
     private int pingInterval; // how often sends ping to the server in msecs
@@ -1271,8 +1273,8 @@ public class Client {
     ConnectionId(InetSocketAddress address, Class<?> protocol, 
                  UserGroupInformation ticket, int rpcTimeout,
                  String serverPrincipal, int maxIdleTime, 
-                 int maxRetries, boolean tcpNoDelay,
-                 boolean doPing, int pingInterval) {
+                 int maxRetries, int maxRetriesOnSocketTimeouts,
+                 boolean tcpNoDelay, boolean doPing, int pingInterval) {
       this.protocol = protocol;
       this.address = address;
       this.ticket = ticket;
@@ -1280,6 +1282,7 @@ public class Client {
       this.serverPrincipal = serverPrincipal;
       this.maxIdleTime = maxIdleTime;
       this.maxRetries = maxRetries;
+      this.maxRetriesOnSocketTimeouts = maxRetriesOnSocketTimeouts;
       this.tcpNoDelay = tcpNoDelay;
       this.doPing = doPing;
       this.pingInterval = pingInterval;
@@ -1311,6 +1314,11 @@ public class Client {
     
     int getMaxRetries() {
       return maxRetries;
+    }
+    
+    /** max connection retries on socket time outs */
+    public int getMaxRetriesOnSocketTimeouts() {
+      return maxRetriesOnSocketTimeouts;
     }
     
     boolean getTcpNoDelay() {
@@ -1347,6 +1355,9 @@ public class Client {
               CommonConfigurationKeysPublic.IPC_CLIENT_CONNECTION_MAXIDLETIME_DEFAULT),
           conf.getInt(CommonConfigurationKeysPublic.IPC_CLIENT_CONNECT_MAX_RETRIES_KEY,
               CommonConfigurationKeysPublic.IPC_CLIENT_CONNECT_MAX_RETRIES_DEFAULT),
+          conf.getInt(
+            CommonConfigurationKeysPublic.IPC_CLIENT_CONNECT_MAX_RETRIES_ON_SOCKET_TIMEOUTS_KEY,
+            CommonConfigurationKeysPublic.IPC_CLIENT_CONNECT_MAX_RETRIES_ON_SOCKET_TIMEOUTS_DEFAULT),
           conf.getBoolean(CommonConfigurationKeysPublic.IPC_CLIENT_TCPNODELAY_KEY,
               CommonConfigurationKeysPublic.IPC_CLIENT_TCPNODELAY_DEFAULT),
           doPing, 

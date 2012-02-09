@@ -39,6 +39,10 @@ import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.fs.permission.PermissionStatus;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.*;
 
+import org.apache.hadoop.ha.HAServiceProtocol;
+import org.apache.hadoop.ha.HealthCheckFailedException;
+import org.apache.hadoop.ha.ServiceFailedException;
+
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.HDFSPolicyProvider;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
@@ -81,6 +85,7 @@ import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifie
 import org.apache.hadoop.hdfs.server.common.IncorrectVersionException;
 import org.apache.hadoop.hdfs.server.common.UpgradeStatusReport;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NamenodeRole;
+import org.apache.hadoop.hdfs.server.namenode.NameNode.OperationCategory;
 import org.apache.hadoop.hdfs.server.namenode.metrics.NameNodeMetrics;
 import org.apache.hadoop.hdfs.server.namenode.web.resources.NamenodeWebHdfsMethods;
 import org.apache.hadoop.hdfs.server.protocol.BlocksWithLocations;
@@ -89,6 +94,7 @@ import org.apache.hadoop.hdfs.server.protocol.DatanodeProtocol;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
 import org.apache.hadoop.hdfs.server.protocol.FinalizeCommand;
+import org.apache.hadoop.hdfs.server.protocol.HeartbeatResponse;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeCommand;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeProtocol;
 import org.apache.hadoop.hdfs.server.protocol.NamenodeProtocols;
@@ -105,6 +111,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.ProtocolSignature;
 import org.apache.hadoop.ipc.RPC;
+import org.apache.hadoop.ipc.RpcPayloadHeader.RpcKind;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.ipc.WritableRpcEngine;
 import org.apache.hadoop.net.Node;
@@ -131,7 +138,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
   private static final Log stateChangeLog = NameNode.stateChangeLog;
   
   // Dependencies from other parts of NN.
-  private final FSNamesystem namesystem;
+  protected final FSNamesystem namesystem;
   protected final NameNode nn;
   private final NameNodeMetrics metrics;
   
@@ -202,6 +209,8 @@ class NameNodeRpcServer implements NamenodeProtocols {
           dnSocketAddr.getHostName(), dnSocketAddr.getPort(), 
           serviceHandlerCount,
           false, conf, namesystem.getDelegationTokenSecretManager());
+      this.serviceRpcServer.addProtocol(RpcKind.RPC_WRITABLE,
+          HAServiceProtocol.class, this);
       DFSUtil.addPBProtocol(conf, NamenodeProtocolPB.class, NNPbService,
           serviceRpcServer);
       DFSUtil.addPBProtocol(conf, DatanodeProtocolPB.class, dnProtoPbService,
@@ -225,6 +234,8 @@ class NameNodeRpcServer implements NamenodeProtocols {
         clientNNPbService, socAddr.getHostName(),
             socAddr.getPort(), handlerCount, false, conf,
             namesystem.getDelegationTokenSecretManager());
+    this.clientRpcServer.addProtocol(RpcKind.RPC_WRITABLE,
+        HAServiceProtocol.class, this);
     DFSUtil.addPBProtocol(conf, NamenodeProtocolPB.class, NNPbService,
         clientRpcServer);
     DFSUtil.addPBProtocol(conf, DatanodeProtocolPB.class, dnProtoPbService,
@@ -304,6 +315,8 @@ class NameNodeRpcServer implements NamenodeProtocols {
       return RefreshUserMappingsProtocol.versionID;
     } else if (protocol.equals(GetUserMappingsProtocol.class.getName())){
       return GetUserMappingsProtocol.versionID;
+    } else if (protocol.equals(HAServiceProtocol.class.getName())) {
+      return HAServiceProtocol.versionID;
     } else {
       throw new IOException("Unknown protocol to name node: " + protocol);
     }
@@ -319,7 +332,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
       throw new IllegalArgumentException(
         "Unexpected not positive size: "+size);
     }
-
+    namesystem.checkOperation(OperationCategory.READ);
     return namesystem.getBlockManager().getBlocks(datanode, size); 
   }
 
@@ -332,6 +345,9 @@ class NameNodeRpcServer implements NamenodeProtocols {
   public void errorReport(NamenodeRegistration registration,
                           int errorCode, 
                           String msg) throws IOException {
+    // nn.checkOperation(OperationCategory.WRITE);
+    // TODO: I dont think this should be checked - it's just for logging
+    // and dropping backups
     verifyRequest(registration);
     LOG.info("Error report from " + registration + ": " + msg);
     if(errorCode == FATAL)
@@ -359,9 +375,6 @@ class NameNodeRpcServer implements NamenodeProtocols {
   @Override // NamenodeProtocol
   public void endCheckpoint(NamenodeRegistration registration,
                             CheckpointSignature sig) throws IOException {
-    verifyRequest(registration);
-    if(!nn.isRole(NamenodeRole.NAMENODE))
-      throw new IOException("Only an ACTIVE node can invoke endCheckpoint.");
     namesystem.endCheckpoint(registration, sig);
   }
 
@@ -510,10 +523,10 @@ class NameNodeRpcServer implements NamenodeProtocols {
     return namesystem.getAdditionalDatanode(src, blk,
         existings, excludeSet, numAdditionalNodes, clientName);
   }
-
   /**
    * The client needs to give up on the block.
    */
+  @Override // ClientProtocol
   public void abandonBlock(ExtendedBlock b, String src, String holder)
       throws IOException {
     if(stateChangeLog.isDebugEnabled()) {
@@ -541,17 +554,9 @@ class NameNodeRpcServer implements NamenodeProtocols {
    * mark the block as corrupt.  In the future we might 
    * check the blocks are actually corrupt. 
    */
-  @Override
+  @Override // ClientProtocol, DatanodeProtocol
   public void reportBadBlocks(LocatedBlock[] blocks) throws IOException {
-    stateChangeLog.info("*DIR* NameNode.reportBadBlocks");
-    for (int i = 0; i < blocks.length; i++) {
-      ExtendedBlock blk = blocks[i].getBlock();
-      DatanodeInfo[] nodes = blocks[i].getLocations();
-      for (int j = 0; j < nodes.length; j++) {
-        DatanodeInfo dn = nodes[j];
-        namesystem.getBlockManager().findAndMarkBlockAsCorrupt(blk, dn);
-      }
-    }
+    namesystem.reportBadBlocks(blocks);
   }
 
   @Override // ClientProtocol
@@ -664,8 +669,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
 
   @Override // ClientProtocol
   public DirectoryListing getListing(String src, byte[] startAfter,
-      boolean needLocation)
-  throws IOException {
+      boolean needLocation) throws IOException {
     DirectoryListing files = namesystem.getListing(
         src, startAfter, needLocation);
     if (files != null) {
@@ -687,14 +691,16 @@ class NameNodeRpcServer implements NamenodeProtocols {
     return namesystem.getFileInfo(src, false);
   }
   
-  @Override
-  public long[] getStats() {
+  @Override // ClientProtocol
+  public long[] getStats() throws IOException {
+    namesystem.checkOperation(OperationCategory.READ);
     return namesystem.getStats();
   }
 
   @Override // ClientProtocol
   public DatanodeInfo[] getDatanodeReport(DatanodeReportType type)
       throws IOException {
+    // TODO(HA): decide on OperationCategory for this
     DatanodeInfo results[] = namesystem.datanodeReport(type);
     if (results == null ) {
       throw new IOException("Cannot find datanode report");
@@ -704,28 +710,32 @@ class NameNodeRpcServer implements NamenodeProtocols {
     
   @Override // ClientProtocol
   public boolean setSafeMode(SafeModeAction action) throws IOException {
+    // TODO:HA decide on OperationCategory for this
     return namesystem.setSafeMode(action);
   }
-
   @Override // ClientProtocol
   public boolean restoreFailedStorage(String arg) 
       throws AccessControlException {
+    // TODO:HA decide on OperationCategory for this
     return namesystem.restoreFailedStorage(arg);
   }
 
   @Override // ClientProtocol
   public void saveNamespace() throws IOException {
+    // TODO:HA decide on OperationCategory for this
     namesystem.saveNamespace();
   }
 
   @Override // ClientProtocol
   public void refreshNodes() throws IOException {
+    // TODO:HA decide on OperationCategory for this
     namesystem.getBlockManager().getDatanodeManager().refreshNodes(
         new HdfsConfiguration());
   }
 
   @Override // NamenodeProtocol
   public long getTransactionID() {
+    // TODO:HA decide on OperationCategory for this
     return namesystem.getEditLog().getSyncTxId();
   }
 
@@ -734,32 +744,35 @@ class NameNodeRpcServer implements NamenodeProtocols {
     return namesystem.rollEditLog();
   }
   
-  @Override
+  @Override // NamenodeProtocol
   public RemoteEditLogManifest getEditLogManifest(long sinceTxId)
   throws IOException {
+    // TODO:HA decide on OperationCategory for this
     return namesystem.getEditLog().getEditLogManifest(sinceTxId);
   }
     
   @Override // ClientProtocol
   public void finalizeUpgrade() throws IOException {
+    // TODO:HA decide on OperationCategory for this
     namesystem.finalizeUpgrade();
   }
 
   @Override // ClientProtocol
   public UpgradeStatusReport distributedUpgradeProgress(UpgradeAction action)
       throws IOException {
+    // TODO:HA decide on OperationCategory for this
     return namesystem.distributedUpgradeProgress(action);
   }
 
   @Override // ClientProtocol
   public void metaSave(String filename) throws IOException {
+    // TODO:HA decide on OperationCategory for this
     namesystem.metaSave(filename);
   }
-
   @Override // ClientProtocol
   public CorruptFileBlocks listCorruptFileBlocks(String path, String cookie)
       throws IOException {
-	String[] cookieTab = new String[] { cookie };
+    String[] cookieTab = new String[] { cookie };
     Collection<FSNamesystem.CorruptFileBlockInfo> fbs =
       namesystem.listCorruptFileBlocks(path, cookieTab);
 
@@ -779,6 +792,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
    */
   @Override // ClientProtocol
   public void setBalancerBandwidth(long bandwidth) throws IOException {
+    // TODO:HA decide on OperationCategory for this
     namesystem.getBlockManager().getDatanodeManager().setBalancerBandwidth(bandwidth);
   }
   
@@ -853,7 +867,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
   }
 
   @Override // DatanodeProtocol
-  public DatanodeCommand[] sendHeartbeat(DatanodeRegistration nodeReg,
+  public HeartbeatResponse sendHeartbeat(DatanodeRegistration nodeReg,
       StorageReport[] report, int xmitsInProgress, int xceiverCount,
       int failedVolumes) throws IOException {
     verifyRequest(nodeReg);
@@ -875,7 +889,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
     }
 
     namesystem.getBlockManager().processReport(nodeReg, poolId, blist);
-    if (nn.getFSImage().isUpgradeFinalized())
+    if (nn.getFSImage().isUpgradeFinalized() && !nn.isStandbyState())
       return new FinalizeCommand(poolId);
     return null;
   }
@@ -889,7 +903,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
           +"from "+nodeReg.getName()+" "+receivedAndDeletedBlocks.length
           +" blocks.");
     }
-    namesystem.getBlockManager().blockReceivedAndDeleted(
+    namesystem.getBlockManager().processIncrementalBlockReport(
         nodeReg, poolId, receivedAndDeletedBlocks[0].getBlocks());
   }
 
@@ -977,6 +991,30 @@ class NameNodeRpcServer implements NamenodeProtocols {
     return UserGroupInformation.createRemoteUser(user).getGroupNames();
   }
 
+  @Override // HAServiceProtocol
+  public synchronized void monitorHealth() throws HealthCheckFailedException {
+    nn.monitorHealth();
+  }
+  
+  @Override // HAServiceProtocol
+  public synchronized void transitionToActive() throws ServiceFailedException {
+    nn.transitionToActive();
+  }
+  
+  @Override // HAServiceProtocol
+  public synchronized void transitionToStandby() throws ServiceFailedException {
+    nn.transitionToStandby();
+  }
+
+  @Override // HAServiceProtocol
+  public synchronized HAServiceState getServiceState() {
+    return nn.getServiceState();
+  }
+
+  @Override // HAServiceProtocol
+  public synchronized boolean readyToBecomeActive() throws ServiceFailedException {
+    return nn.readyToBecomeActive();
+  }
 
   /**
    * Verify version.
