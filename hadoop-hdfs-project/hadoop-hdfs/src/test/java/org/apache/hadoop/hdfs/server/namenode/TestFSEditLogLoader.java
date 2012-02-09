@@ -165,7 +165,7 @@ public class TestFSEditLogLoader {
     SortedMap<Long, Long> offsetToTxId = Maps.newTreeMap();
     try {
       fsel = FSImageTestUtil.createStandaloneEditLog(testDir);
-      fsel.open();
+      fsel.openForWrite();
       assertTrue("should exist: " + logFile, logFile.exists());
       
       for (int i = 0; i < NUM_TXNS; i++) {
@@ -243,7 +243,9 @@ public class TestFSEditLogLoader {
       Files.copy(logFileBak, logFile);
       corruptByteInFile(logFile, offset);
       EditLogValidation val = EditLogFileInputStream.validateEditLog(logFile);
-      assertTrue(val.getNumTransactions() >= prevNumValid);
+      assertTrue(String.format("%d should have been >= %d",
+          val.getNumTransactions(), prevNumValid),
+          val.getNumTransactions() >= prevNumValid);
       prevNumValid = val.getNumTransactions();
     }
   }

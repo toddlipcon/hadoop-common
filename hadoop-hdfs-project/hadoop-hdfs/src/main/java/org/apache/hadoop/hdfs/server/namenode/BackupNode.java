@@ -43,6 +43,7 @@ import org.apache.hadoop.hdfs.server.protocol.NamenodeRegistration;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.ipc.RPC;
+import org.apache.hadoop.ipc.StandbyException;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 
@@ -90,13 +91,13 @@ public class BackupNode extends NameNode {
   // Common NameNode methods implementation for backup node.
   /////////////////////////////////////////////////////
   @Override // NameNode
-  protected InetSocketAddress getRpcServerAddress(Configuration conf) throws IOException {
+  protected InetSocketAddress getRpcServerAddress(Configuration conf) {
     String addr = conf.get(BN_ADDRESS_NAME_KEY, BN_ADDRESS_DEFAULT);
     return NetUtils.createSocketAddr(addr);
   }
   
   @Override
-  protected InetSocketAddress getServiceRpcServerAddress(Configuration conf) throws IOException {
+  protected InetSocketAddress getServiceRpcServerAddress(Configuration conf) {
     String addr = conf.get(BN_SERVICE_RPC_ADDRESS_KEY);
     if (addr == null || addr.isEmpty()) {
       return null;
@@ -144,6 +145,7 @@ public class BackupNode extends NameNode {
                  CommonConfigurationKeys.FS_TRASH_INTERVAL_DEFAULT);
     NamespaceInfo nsInfo = handshake(conf);
     super.initialize(conf);
+
     if (false == namesystem.isInSafeMode()) {
       namesystem.setSafeMode(SafeModeAction.SAFEMODE_ENTER);
     }
@@ -198,6 +200,11 @@ public class BackupNode extends NameNode {
       checkpointManager.interrupt();
       checkpointManager = null;
     }
+
+    // Abort current log segment - otherwise the NN shutdown code
+    // will close it gracefully, which is incorrect.
+    getFSImage().getEditLog().abortCurrentLogSegment();
+
     // Stop name-node threads
     super.stop();
   }
@@ -231,58 +238,31 @@ public class BackupNode extends NameNode {
       }
       return super.getProtocolVersion(protocol, clientVersion);
     }
-  
-    /////////////////////////////////////////////////////
-    // NamenodeProtocol implementation for backup node.
-    /////////////////////////////////////////////////////
-    @Override // NamenodeProtocol
-    public BlocksWithLocations getBlocks(DatanodeInfo datanode, long size)
-    throws IOException {
-      throw new UnsupportedActionException("getBlocks");
-    }
-  
-    // Only active name-node can register other nodes.
-    @Override // NamenodeProtocol
-    public NamenodeRegistration register(NamenodeRegistration registration
-    ) throws IOException {
-      throw new UnsupportedActionException("register");
-    }
-  
-    @Override // NamenodeProtocol
-    public NamenodeCommand startCheckpoint(NamenodeRegistration registration)
-    throws IOException {
-      throw new UnsupportedActionException("startCheckpoint");
-    }
-  
-    @Override // NamenodeProtocol
-    public void endCheckpoint(NamenodeRegistration registration,
-                              CheckpointSignature sig) throws IOException {
-      throw new UnsupportedActionException("endCheckpoint");
-    }  
-  
+
     /////////////////////////////////////////////////////
     // BackupNodeProtocol implementation for backup node.
     /////////////////////////////////////////////////////
-  
+    @Override
+    public void startLogSegment(NamenodeRegistration registration, long txid)
+        throws IOException {
+      namesystem.checkOperation(OperationCategory.JOURNAL);
+      verifyRequest(registration);
+      
+      getBNImage().namenodeStartedLogSegment(txid);
+    }
+    
     @Override
     public void journal(NamenodeRegistration nnReg,
         long firstTxId, int numTxns,
         byte[] records) throws IOException {
+      namesystem.checkOperation(OperationCategory.JOURNAL);
       verifyRequest(nnReg);
       if(!nnRpcAddress.equals(nnReg.getAddress()))
         throw new IOException("Journal request from unexpected name-node: "
-            + nnReg.getAddress() + " expecting " + clientRpcAddress);
+            + nnReg.getAddress() + " expecting " + nnRpcAddress);
       getBNImage().journal(firstTxId, numTxns, records);
     }
-  
-    @Override
-    public void startLogSegment(NamenodeRegistration registration, long txid)
-        throws IOException {
-      verifyRequest(registration);
-    
-      getBNImage().namenodeStartedLogSegment(txid);
-    }
-    
+
     private BackupImage getBNImage() {
       return (BackupImage)nn.getFSImage();
     }
@@ -416,6 +396,24 @@ public class BackupNode extends NameNode {
   
   String getClusterId() {
     return clusterId;
+  }
+  
+  @Override
+  protected NameNodeHAContext createHAContext() {
+    return new BNHAContext();
+  }
+  
+  private class BNHAContext extends NameNodeHAContext {
+    @Override // NameNode
+    public void checkOperation(OperationCategory op)
+        throws StandbyException {
+      if (OperationCategory.JOURNAL != op &&
+          !(OperationCategory.READ == op && allowStaleStandbyReads)) {
+        String msg = "Operation category " + op
+            + " is not supported at the BackupNode";
+        throw new StandbyException(msg);
+      }
+    }
   }
   
   @Override

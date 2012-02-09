@@ -22,8 +22,8 @@ import java.io.*;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
-import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.DatanodeID;
+import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.security.KerberosInfo;
@@ -94,7 +94,7 @@ public interface DatanodeProtocol extends VersionedProtocol {
    * sendHeartbeat() tells the NameNode that the DataNode is still
    * alive and well.  Includes some status info, too. 
    * It also gives the NameNode a chance to return 
-   * an array of "DatanodeCommand" objects.
+   * an array of "DatanodeCommand" objects in HeartbeatResponse.
    * A DatanodeCommand tells the DataNode to invalidate local block(s), 
    * or to copy them to other DataNodes, etc.
    * @param registration datanode registration information
@@ -104,7 +104,7 @@ public interface DatanodeProtocol extends VersionedProtocol {
    * @param failedVolumes number of failed volumes
    * @throws IOException on error
    */
-  public DatanodeCommand[] sendHeartbeat(DatanodeRegistration registration,
+  public HeartbeatResponse sendHeartbeat(DatanodeRegistration registration,
                                        StorageReport[] reports,
                                        int xmitsInProgress,
                                        int xceiverCount,
@@ -119,7 +119,8 @@ public interface DatanodeProtocol extends VersionedProtocol {
    * @param registration
    * @param poolId - the block pool ID for the blocks
    * @param reports - report of blocks per storage
-   *     Each block is represented as 2 longs.
+   *     Each finalized block is represented as 3 longs. Each under-
+   *     construction replica is represented as 4 longs.
    *     This is done instead of Block[] to reduce memory used by block reports.
    *     
    * @return - the next command for DN to process.

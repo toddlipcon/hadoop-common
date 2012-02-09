@@ -1,4 +1,3 @@
-
 /**
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -30,6 +29,7 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.Socket;
 import java.net.SocketException;
+import java.net.URI;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -83,6 +83,7 @@ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.BlockOpResponseP
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpBlockChecksumResponseProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
+import org.apache.hadoop.hdfs.security.token.block.InvalidBlockTokenException;
 import org.apache.hadoop.hdfs.security.token.delegation.DelegationTokenIdentifier;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants;
 import org.apache.hadoop.hdfs.server.common.UpgradeStatusReport;
@@ -105,7 +106,6 @@ import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenRenewer;
 import org.apache.hadoop.util.DataChecksum;
 import org.apache.hadoop.util.Progressable;
-import org.apache.hadoop.hdfs.security.token.block.InvalidBlockTokenException;
 
 /********************************************************
  * DFSClient can connect to a Hadoop Filesystem and 
@@ -143,6 +143,9 @@ public class DFSClient implements java.io.Closeable {
    * DFSClient configuration 
    */
   static class Conf {
+    final int maxFailoverAttempts;
+    final int failoverSleepBaseMillis;
+    final int failoverSleepMaxMillis;
     final int maxBlockAcquireFailures;
     final int confTime;
     final int ioBufferSize;
@@ -164,6 +167,16 @@ public class DFSClient implements java.io.Closeable {
     final boolean useLegacyBlockReader;
 
     Conf(Configuration conf) {
+      maxFailoverAttempts = conf.getInt(
+          DFS_CLIENT_FAILOVER_MAX_ATTEMPTS_KEY,
+          DFS_CLIENT_FAILOVER_MAX_ATTEMPTS_DEFAULT);
+      failoverSleepBaseMillis = conf.getInt(
+          DFS_CLIENT_FAILOVER_SLEEPTIME_BASE_KEY,
+          DFS_CLIENT_FAILOVER_SLEEPTIME_BASE_DEFAULT);
+      failoverSleepMaxMillis = conf.getInt(
+          DFS_CLIENT_FAILOVER_SLEEPTIME_MAX_KEY,
+          DFS_CLIENT_FAILOVER_SLEEPTIME_MAX_DEFAULT);
+
       maxBlockAcquireFailures = conf.getInt(
           DFS_CLIENT_MAX_BLOCK_ACQUIRE_FAILURES_KEY,
           DFS_CLIENT_MAX_BLOCK_ACQUIRE_FAILURES_DEFAULT);
@@ -236,6 +249,7 @@ public class DFSClient implements java.io.Closeable {
    */
   private final Map<String, DFSOutputStream> filesBeingWritten
       = new HashMap<String, DFSOutputStream>();
+
   private boolean shortCircuitLocalReads;
   
   /**
@@ -247,58 +261,75 @@ public class DFSClient implements java.io.Closeable {
   public DFSClient(Configuration conf) throws IOException {
     this(NameNode.getAddress(conf), conf);
   }
+  
+  public DFSClient(InetSocketAddress address, Configuration conf) throws IOException {
+    this(NameNode.getUri(address), conf);
+  }
 
   /**
-   * Same as this(nameNodeAddr, conf, null);
+   * Same as this(nameNodeUri, conf, null);
    * @see #DFSClient(InetSocketAddress, Configuration, org.apache.hadoop.fs.FileSystem.Statistics)
    */
-  public DFSClient(InetSocketAddress nameNodeAddr, Configuration conf
+  public DFSClient(URI nameNodeUri, Configuration conf
       ) throws IOException {
-    this(nameNodeAddr, conf, null);
+    this(nameNodeUri, conf, null);
   }
 
   /**
-   * Same as this(nameNodeAddr, null, conf, stats);
+   * Same as this(nameNodeUri, null, conf, stats);
    * @see #DFSClient(InetSocketAddress, ClientProtocol, Configuration, org.apache.hadoop.fs.FileSystem.Statistics) 
    */
-  public DFSClient(InetSocketAddress nameNodeAddr, Configuration conf,
+  public DFSClient(URI nameNodeUri, Configuration conf,
                    FileSystem.Statistics stats)
     throws IOException {
-    this(nameNodeAddr, null, conf, stats);
+    this(nameNodeUri, null, conf, stats);
   }
-
+  
   /** 
-   * Create a new DFSClient connected to the given nameNodeAddr or rpcNamenode.
-   * Exactly one of nameNodeAddr or rpcNamenode must be null.
+   * Create a new DFSClient connected to the given nameNodeUri or rpcNamenode.
+   * Exactly one of nameNodeUri or rpcNamenode must be null.
    */
-  DFSClient(InetSocketAddress nameNodeAddr, ClientProtocol rpcNamenode,
+  DFSClient(URI nameNodeUri, ClientProtocol rpcNamenode,
       Configuration conf, FileSystem.Statistics stats)
     throws IOException {
     // Copy only the required DFSClient configuration
     this.dfsClientConf = new Conf(conf);
     this.conf = conf;
     this.stats = stats;
-    this.nnAddress = nameNodeAddr;
     this.socketFactory = NetUtils.getSocketFactory(conf, ClientProtocol.class);
     this.dtpReplaceDatanodeOnFailure = ReplaceDatanodeOnFailure.get(conf);
 
     // The hdfsTimeout is currently the same as the ipc timeout 
     this.hdfsTimeout = Client.getTimeout(conf);
     this.ugi = UserGroupInformation.getCurrentUser();
-    final String authority = nameNodeAddr == null? "null":
-        nameNodeAddr.getHostName() + ":" + nameNodeAddr.getPort();
+    
+    final String authority = nameNodeUri == null? "null": nameNodeUri.getAuthority();
     this.leaserenewer = LeaseRenewer.getInstance(authority, ugi, this);
     this.clientName = leaserenewer.getClientName(dfsClientConf.taskId);
+    
     this.socketCache = new SocketCache(dfsClientConf.socketCacheCapacity);
-    if (nameNodeAddr != null && rpcNamenode == null) {
-      this.namenode = DFSUtil.createNamenode(nameNodeAddr, conf, ugi);
-    } else if (nameNodeAddr == null && rpcNamenode != null) {
+    ClientProtocol failoverNNProxy = (ClientProtocol) HAUtil
+        .createFailoverProxy(conf, nameNodeUri, ClientProtocol.class);
+    if (nameNodeUri != null && failoverNNProxy != null) {
+      this.namenode = failoverNNProxy;
+      nnAddress = null;
+    } else if (nameNodeUri != null && rpcNamenode == null) {
+      this.namenode = DFSUtil.createNamenode(NameNode.getAddress(nameNodeUri), conf);
+
+      // TODO(HA): This doesn't really apply in the case of HA. Need to get smart
+      // about tokens in an HA setup, generally.
+      nnAddress = NameNode.getAddress(nameNodeUri);
+    } else if (nameNodeUri == null && rpcNamenode != null) {
       //This case is used for testing.
       this.namenode = rpcNamenode;
+
+      // TODO(HA): This doesn't really apply in the case of HA. Need to get smart
+      // about tokens in an HA setup, generally.
+      nnAddress = null; 
     } else {
       throw new IllegalArgumentException(
-          "Expecting exactly one of nameNodeAddr and rpcNamenode being null: "
-          + "nameNodeAddr=" + nameNodeAddr + ", rpcNamenode=" + rpcNamenode);
+          "Expecting exactly one of nameNodeUri and rpcNamenode being null: "
+          + "nameNodeUri=" + nameNodeUri + ", rpcNamenode=" + rpcNamenode);
     }
     // read directly from the block file if configured.
     this.shortCircuitLocalReads = conf.getBoolean(
@@ -401,8 +432,9 @@ public class DFSClient implements java.io.Closeable {
         // fall through - lets try the stopProxy
         LOG.warn("Exception closing namenode, stopping the proxy");
       }     
+    } else {
+      RPC.stopProxy(namenode);
     }
-    RPC.stopProxy(namenode);
   }
   
   /** Abort and release resources held.  Ignore all errors. */

@@ -45,6 +45,7 @@ import org.apache.hadoop.fs.FileSystem;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.*;
 
 import org.apache.hadoop.hdfs.DFSUtil;
+import org.apache.hadoop.hdfs.HAUtil;
 import org.apache.hadoop.hdfs.DFSUtil.ErrorSimulator;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
@@ -112,17 +113,9 @@ public class SecondaryNameNode implements Runnable {
   private String infoBindAddress;
 
   private Collection<URI> checkpointDirs;
-  private Collection<URI> checkpointEditsDirs;
-  
-  /** How often to checkpoint regardless of number of txns */
-  private long checkpointPeriod;    // in seconds
-  
-  /** How often to poll the NN to check checkpointTxnCount */
-  private long checkpointCheckPeriod; // in seconds
-  
-  /** checkpoint once every this many transactions, regardless of time */
-  private long checkpointTxnCount;
+  private List<URI> checkpointEditsDirs;
 
+  private CheckpointConf checkpointConf;
   private FSNamesystem namesystem;
 
 
@@ -132,9 +125,9 @@ public class SecondaryNameNode implements Runnable {
       + "\nName Node Address    : " + nameNodeAddr   
       + "\nStart Time           : " + new Date(starttime)
       + "\nLast Checkpoint Time : " + (lastCheckpointTime == 0? "--": new Date(lastCheckpointTime))
-      + "\nCheckpoint Period    : " + checkpointPeriod + " seconds"
-      + "\nCheckpoint Size      : " + StringUtils.byteDesc(checkpointTxnCount)
-                                    + " (= " + checkpointTxnCount + " bytes)" 
+      + "\nCheckpoint Period    : " + checkpointConf.getPeriod() + " seconds"
+      + "\nCheckpoint Size      : " + StringUtils.byteDesc(checkpointConf.getTxnCount())
+                                    + " (= " + checkpointConf.getTxnCount() + " bytes)" 
       + "\nCheckpoint Dirs      : " + checkpointDirs
       + "\nCheckpoint Edits Dirs: " + checkpointEditsDirs;
   }
@@ -174,16 +167,19 @@ public class SecondaryNameNode implements Runnable {
   public SecondaryNameNode(Configuration conf,
       CommandLineOpts commandLineOpts) throws IOException {
     try {
-      NameNode.initializeGenericKeys(conf,
-          DFSUtil.getSecondaryNameServiceId(conf));
+      String nsId = DFSUtil.getSecondaryNameServiceId(conf);
+      if (HAUtil.isHAEnabled(conf, nsId)) {
+        throw new IOException(
+            "Cannot use SecondaryNameNode in an HA cluster." +
+            " The Standby Namenode will perform checkpointing.");
+      }
+      NameNode.initializeGenericKeys(conf, nsId, null);
       initialize(conf, commandLineOpts);
-    } catch(IOException e) {
+    } catch (IOException e) {
       shutdown();
-      LOG.fatal("Failed to start secondary namenode. ", e);
       throw e;
-    } catch(HadoopIllegalArgumentException e) {
+    } catch (HadoopIllegalArgumentException e) {
       shutdown();
-      LOG.fatal("Failed to start secondary namenode. ", e);
       throw e;
     }
   }
@@ -231,16 +227,8 @@ public class SecondaryNameNode implements Runnable {
     namesystem = new FSNamesystem(conf, checkpointImage);
 
     // Initialize other scheduling parameters from the configuration
-    checkpointCheckPeriod = conf.getLong(
-        DFS_NAMENODE_CHECKPOINT_CHECK_PERIOD_KEY,
-        DFS_NAMENODE_CHECKPOINT_CHECK_PERIOD_DEFAULT);
-        
-    checkpointPeriod = conf.getLong(DFS_NAMENODE_CHECKPOINT_PERIOD_KEY, 
-                                    DFS_NAMENODE_CHECKPOINT_PERIOD_DEFAULT);
-    checkpointTxnCount = conf.getLong(DFS_NAMENODE_CHECKPOINT_TXNS_KEY, 
-                                  DFS_NAMENODE_CHECKPOINT_TXNS_DEFAULT);
-    warnForDeprecatedConfigs(conf);
-
+    checkpointConf = new CheckpointConf(conf);
+    
     // initialize the webserver for uploading files.
     // Kerberized SSL servers must be run from the host principal...
     UserGroupInformation httpUGI = 
@@ -295,21 +283,9 @@ public class SecondaryNameNode implements Runnable {
     conf.set(DFS_NAMENODE_SECONDARY_HTTP_ADDRESS_KEY, infoBindAddress + ":" +infoPort); 
     LOG.info("Secondary Web-server up at: " + infoBindAddress + ":" +infoPort);
     LOG.info("Secondary image servlet up at: " + infoBindAddress + ":" + imagePort);
-    LOG.info("Checkpoint Period   :" + checkpointPeriod + " secs " +
-             "(" + checkpointPeriod/60 + " min)");
-    LOG.info("Log Size Trigger    :" + checkpointTxnCount + " txns");
-  }
-
-  static void warnForDeprecatedConfigs(Configuration conf) {
-    for (String key : ImmutableList.of(
-          "fs.checkpoint.size",
-          "dfs.namenode.checkpoint.size")) {
-      if (conf.get(key) != null) {
-        LOG.warn("Configuration key " + key + " is deprecated! Ignoring..." +
-            " Instead please specify a value for " +
-            DFS_NAMENODE_CHECKPOINT_TXNS_KEY);
-      }
-    }
+    LOG.info("Checkpoint Period   :" + checkpointConf.getPeriod() + " secs " +
+             "(" + checkpointConf.getPeriod()/60 + " min)");
+    LOG.info("Log Size Trigger    :" + checkpointConf.getTxnCount() + " txns");
   }
 
   /**
@@ -355,12 +331,11 @@ public class SecondaryNameNode implements Runnable {
   // The main work loop
   //
   public void doWork() {
-
     //
     // Poll the Namenode (once every checkpointCheckPeriod seconds) to find the
     // number of transactions in the edit log that haven't yet been checkpointed.
     //
-    long period = Math.min(checkpointCheckPeriod, checkpointPeriod);
+    long period = checkpointConf.getCheckPeriod();
 
     while (shouldRun) {
       try {
@@ -379,7 +354,7 @@ public class SecondaryNameNode implements Runnable {
         long now = System.currentTimeMillis();
 
         if (shouldCheckpointBasedOnCount() ||
-            now >= lastCheckpointTime + 1000 * checkpointPeriod) {
+            now >= lastCheckpointTime + 1000 * checkpointConf.getPeriod()) {
           doCheckpoint();
           lastCheckpointTime = now;
         }
@@ -470,19 +445,10 @@ public class SecondaryNameNode implements Runnable {
     }
 
     String configuredAddress = DFSUtil.getInfoServer(null, conf, true);
-    InetSocketAddress sockAddr = NetUtils.createSocketAddr(configuredAddress);
-    if (sockAddr.getAddress().isAnyLocalAddress()) {
-      if(UserGroupInformation.isSecurityEnabled()) {
-        throw new IOException("Cannot use a wildcard address with security. " +
-                              "Must explicitly set bind address for Kerberos");
-      }
-      return fsName.getHost() + ":" + sockAddr.getPort();
-    } else {
-      if(LOG.isDebugEnabled()) {
-        LOG.debug("configuredAddress = " + configuredAddress);
-      }
-      return configuredAddress;
-    }
+    String address = DFSUtil.substituteForWildcardAddress(configuredAddress,
+        fsName.getHost());
+    LOG.debug("Will connect to NameNode at HTTP address: " + address);
+    return address;
   }
   
   /**
@@ -573,13 +539,13 @@ public class SecondaryNameNode implements Runnable {
       switch (opts.getCommand()) {
       case CHECKPOINT:
         long count = countUncheckpointedTxns();
-        if (count > checkpointTxnCount ||
+        if (count > checkpointConf.getTxnCount() ||
             opts.shouldForceCheckpoint()) {
           doCheckpoint();
         } else {
           System.err.println("EditLog size " + count + " transactions is " +
                              "smaller than configured checkpoint " +
-                             "interval " + checkpointTxnCount + " transactions.");
+                             "interval " + checkpointConf.getTxnCount() + " transactions.");
           System.err.println("Skipping checkpoint.");
         }
         break;
@@ -625,7 +591,7 @@ public class SecondaryNameNode implements Runnable {
   }
 
   boolean shouldCheckpointBasedOnCount() throws IOException {
-    return countUncheckpointedTxns() >= checkpointTxnCount;
+    return countUncheckpointedTxns() >= checkpointConf.getTxnCount();
   }
 
   /**
@@ -641,7 +607,13 @@ public class SecondaryNameNode implements Runnable {
     
     StringUtils.startupShutdownMessage(SecondaryNameNode.class, argv, LOG);
     Configuration tconf = new HdfsConfiguration();
-    SecondaryNameNode secondary = new SecondaryNameNode(tconf, opts);
+    SecondaryNameNode secondary = null;
+    try {
+      secondary = new SecondaryNameNode(tconf, opts);
+    } catch (IOException ioe) {
+      LOG.fatal("Failed to start secondary namenode", ioe);
+      System.exit(-1);
+    }
 
     if (opts.getCommand() != null) {
       int ret = secondary.processStartupCommand(opts);
@@ -758,7 +730,7 @@ public class SecondaryNameNode implements Runnable {
      */
     CheckpointStorage(Configuration conf, 
                       Collection<URI> imageDirs,
-                      Collection<URI> editsDirs) throws IOException {
+                      List<URI> editsDirs) throws IOException {
       super(conf, imageDirs, editsDirs);
       
       // the 2NN never writes edits -- it only downloads them. So

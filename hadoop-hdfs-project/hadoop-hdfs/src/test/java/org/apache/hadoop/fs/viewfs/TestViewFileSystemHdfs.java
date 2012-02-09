@@ -28,6 +28,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileSystemTestHelper;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.MiniDFSNNTopology;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.junit.After;
@@ -52,7 +53,9 @@ public class TestViewFileSystemHdfs extends ViewFileSystemBaseTest {
       LoginException, URISyntaxException {
     SupportsBlocks = true;
     cluster =
-        new MiniDFSCluster.Builder(CONF).numNameNodes(2).numDataNodes(2)
+        new MiniDFSCluster.Builder(CONF).nnTopology(
+                MiniDFSNNTopology.simpleFederatedTopology(2))
+            .numDataNodes(2)
             .build();
     cluster.waitClusterUp();
     NameNodeAdapter.getDtSecretManager(cluster.getNamesystem(0)).startThreads();

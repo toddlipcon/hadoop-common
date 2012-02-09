@@ -28,6 +28,7 @@ import java.net.URI;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -156,7 +157,8 @@ public class NNStorage extends Storage implements Closeable {
     
     // this may modify the editsDirs, so copy before passing in
     setStorageDirectories(imageDirs, 
-                          Lists.newArrayList(editsDirs));
+                          Lists.newArrayList(editsDirs),
+                          FSNamesystem.getSharedEditsDirs(conf));
   }
 
   @Override // Storage
@@ -244,6 +246,16 @@ public class NNStorage extends Storage implements Closeable {
   List<StorageDirectory> getRemovedStorageDirs() {
     return this.removedStorageDirs;
   }
+  
+  /**
+   * See {@link NNStorage#setStorageDirectories(Collection, Collection, Collection)}
+   */
+  @VisibleForTesting
+  synchronized void setStorageDirectories(Collection<URI> fsNameDirs,
+                                          Collection<URI> fsEditsDirs)
+      throws IOException {
+    setStorageDirectories(fsNameDirs, fsEditsDirs, new ArrayList<URI>());
+  }
 
   /**
    * Set the storage directories which will be used. This should only ever be
@@ -260,7 +272,8 @@ public class NNStorage extends Storage implements Closeable {
    */
   @VisibleForTesting
   synchronized void setStorageDirectories(Collection<URI> fsNameDirs,
-                                          Collection<URI> fsEditsDirs)
+                                          Collection<URI> fsEditsDirs,
+                                          Collection<URI> sharedEditsDirs)
       throws IOException {
     this.storageDirs.clear();
     this.removedStorageDirs.clear();
@@ -284,7 +297,8 @@ public class NNStorage extends Storage implements Closeable {
       if(dirName.getScheme().compareTo(JournalType.FILE.name().toLowerCase())
           == 0){
         this.addStorageDir(new StorageDirectory(new File(dirName.getPath()),
-            dirType));
+            dirType,
+            !sharedEditsDirs.contains(dirName))); // Don't lock the dir if it's shared.
       }
     }
 
@@ -296,7 +310,7 @@ public class NNStorage extends Storage implements Closeable {
       if(dirName.getScheme().compareTo(JournalType.FILE.name().toLowerCase())
           == 0)
         this.addStorageDir(new StorageDirectory(new File(dirName.getPath()),
-                    NameNodeDirType.EDITS));
+                    NameNodeDirType.EDITS, !sharedEditsDirs.contains(dirName)));
     }
   }
 
@@ -449,7 +463,7 @@ public class NNStorage extends Storage implements Closeable {
   /**
    * Return the transaction ID of the last checkpoint.
    */
-  long getMostRecentCheckpointTxId() {
+  public long getMostRecentCheckpointTxId() {
     return mostRecentCheckpointTxId;
   }
 

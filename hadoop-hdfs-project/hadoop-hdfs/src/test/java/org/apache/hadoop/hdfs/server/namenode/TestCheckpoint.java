@@ -46,6 +46,7 @@ import org.apache.hadoop.hdfs.DFSUtil.ErrorSimulator;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.MiniDFSNNTopology;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.StartupOption;
 import org.apache.hadoop.hdfs.server.common.Storage.StorageDirectory;
@@ -860,7 +861,7 @@ public class TestCheckpoint extends TestCase {
   }
 
   /**
-   * Tests save namepsace.
+   * Tests save namespace.
    */
   public void testSaveNamespace() throws IOException {
     MiniDFSCluster cluster = null;
@@ -910,10 +911,12 @@ public class TestCheckpoint extends TestCase {
         throw new IOException(e);
       }
       
+      final int EXPECTED_TXNS_FIRST_SEG = 12;
+      
       // the following steps should have happened:
-      //   edits_inprogress_1 -> edits_1-8  (finalized)
-      //   fsimage_8 created
-      //   edits_inprogress_9 created
+      //   edits_inprogress_1 -> edits_1-12  (finalized)
+      //   fsimage_12 created
+      //   edits_inprogress_13 created
       //
       for(URI uri : editsDirs) {
         File ed = new File(uri.getPath());
@@ -925,19 +928,21 @@ public class TestCheckpoint extends TestCase {
                                       NNStorage.getInProgressEditsFileName(1));
         assertFalse(originalEdits.exists());
         File finalizedEdits = new File(curDir,
-            NNStorage.getFinalizedEditsFileName(1,8));
-        assertTrue(finalizedEdits.exists());
+            NNStorage.getFinalizedEditsFileName(1, EXPECTED_TXNS_FIRST_SEG));
+        GenericTestUtils.assertExists(finalizedEdits);
         assertTrue(finalizedEdits.length() > Integer.SIZE/Byte.SIZE);
 
-        assertTrue(new File(ed, "current/"
-                       + NNStorage.getInProgressEditsFileName(9)).exists());
+        GenericTestUtils.assertExists(new File(ed, "current/"
+                       + NNStorage.getInProgressEditsFileName(
+                           EXPECTED_TXNS_FIRST_SEG + 1)));
       }
       
       Collection<URI> imageDirs = cluster.getNameDirs(0);
       for (URI uri : imageDirs) {
         File imageDir = new File(uri.getPath());
         File savedImage = new File(imageDir, "current/"
-                                   + NNStorage.getImageFileName(8));
+                                   + NNStorage.getImageFileName(
+                                       EXPECTED_TXNS_FIRST_SEG));
         assertTrue("Should have saved image at " + savedImage,
             savedImage.exists());        
       }
@@ -1058,8 +1063,9 @@ public class TestCheckpoint extends TestCase {
     String nameserviceId2 = "ns2";
     conf.set(DFSConfigKeys.DFS_FEDERATION_NAMESERVICES, nameserviceId1
         + "," + nameserviceId2);
-    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf).numNameNodes(2)
-        .nameNodePort(9928).build();
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+        .nnTopology(MiniDFSNNTopology.simpleFederatedTopology(2))
+        .build();
     Configuration snConf1 = new HdfsConfiguration(cluster.getConfiguration(0));
     Configuration snConf2 = new HdfsConfiguration(cluster.getConfiguration(1));
     InetSocketAddress nn1RpcAddress =
@@ -1075,9 +1081,9 @@ public class TestCheckpoint extends TestCase {
     snConf2.set(DFSConfigKeys.DFS_NAMENODE_SERVICE_RPC_ADDRESS_KEY, "");
 
     // Set the nameserviceIds
-    snConf1.set(DFSUtil.getNameServiceIdKey(
+    snConf1.set(DFSUtil.addKeySuffixes(
         DFSConfigKeys.DFS_NAMENODE_SERVICE_RPC_ADDRESS_KEY, nameserviceId1), nn1);
-    snConf2.set(DFSUtil.getNameServiceIdKey(
+    snConf2.set(DFSUtil.addKeySuffixes(
         DFSConfigKeys.DFS_NAMENODE_SERVICE_RPC_ADDRESS_KEY, nameserviceId2), nn2);
 
     SecondaryNameNode secondary1 = startSecondaryNameNode(snConf1);
@@ -1316,17 +1322,11 @@ public class TestCheckpoint extends TestCase {
       // Let the first one finish
       delayer.proceed();
       
-      // Letting the first node continue should catch an exception
+      // Letting the first node continue, it should try to upload the
+      // same image, and gracefully ignore it, while logging an
+      // error message.
       checkpointThread.join();
-      try {
-        checkpointThread.propagateExceptions();
-        fail("Didn't throw!");
-      } catch (Exception ioe) {
-        assertTrue("Unexpected exception: " +
-            StringUtils.stringifyException(ioe),
-            ioe.toString().contains("Another checkpointer already uploaded"));
-        LOG.info("Caught expected exception", ioe);
-      }
+      checkpointThread.propagateExceptions();
       
       // primary should still consider fsimage_4 the latest
       assertEquals(4, storage.getMostRecentCheckpointTxId());
@@ -1762,7 +1762,7 @@ public class TestCheckpoint extends TestCase {
   private void assertParallelFilesInvariant(MiniDFSCluster cluster,
       ImmutableList<SecondaryNameNode> secondaries) throws Exception {
     List<File> allCurrentDirs = Lists.newArrayList();
-    allCurrentDirs.addAll(getNameNodeCurrentDirs(cluster));
+    allCurrentDirs.addAll(getNameNodeCurrentDirs(cluster, 0));
     for (SecondaryNameNode snn : secondaries) {
       allCurrentDirs.addAll(getCheckpointCurrentDirs(snn));
     }

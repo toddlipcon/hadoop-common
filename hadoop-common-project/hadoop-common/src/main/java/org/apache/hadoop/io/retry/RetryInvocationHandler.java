@@ -20,14 +20,15 @@ package org.apache.hadoop.io.retry;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.Collections;
 import java.util.Map;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.io.retry.RetryPolicy.RetryAction;
+import org.apache.hadoop.util.ThreadUtil;
 import org.apache.hadoop.ipc.Client.ConnectionId;
+import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RpcInvocationHandler;
 
 class RetryInvocationHandler implements RpcInvocationHandler {
@@ -85,40 +86,65 @@ class RetryInvocationHandler implements RpcInvocationHandler {
             .isAnnotationPresent(Idempotent.class);
         RetryAction action = policy.shouldRetry(e, retries++, invocationFailoverCount,
             isMethodIdempotent);
-        if (action == RetryAction.FAIL) {
+        if (action.action == RetryAction.RetryDecision.FAIL) {
           LOG.warn("Exception while invoking " + method.getName()
                    + " of " + currentProxy.getClass() + ". Not retrying.", e);
           if (!method.getReturnType().equals(Void.TYPE)) {
             throw e; // non-void methods can't fail without an exception
           }
           return null;
-        } else if (action == RetryAction.FAILOVER_AND_RETRY) {
-          LOG.warn("Exception while invoking " + method.getName()
+        } else { // retry or failover
+
+          if (action.action == RetryAction.RetryDecision.FAILOVER_AND_RETRY) {
+            String msg = "Exception while invoking " + method.getName()
               + " of " + currentProxy.getClass()
               + " after " + invocationFailoverCount + " fail over attempts."
-              + " Trying to fail over.", e);
-          // Make sure that concurrent failed method invocations only cause a
-          // single actual fail over.
-          synchronized (proxyProvider) {
-            if (invocationAttemptFailoverCount == proxyProviderFailoverCount) {
-              proxyProvider.performFailover(currentProxy);
-              proxyProviderFailoverCount++;
-              currentProxy = proxyProvider.getProxy();
+              + " Trying to fail over " + formatSleepMessage(action.delayMillis);
+            if (LOG.isDebugEnabled()) {
+              LOG.debug(msg, e);
             } else {
-              LOG.warn("A failover has occurred since the start of this method"
-                  + " invocation attempt.");
+              LOG.warn(msg);
+            }
+          } else {
+            if(LOG.isDebugEnabled()) {
+              LOG.debug("Exception while invoking " + method.getName()
+                  + " of " + currentProxy.getClass() + ". Retrying " +
+                  formatSleepMessage(action.delayMillis), e);
             }
           }
-          invocationFailoverCount++;
-        }
-        if(LOG.isDebugEnabled()) {
-          LOG.debug("Exception while invoking " + method.getName()
-              + " of " + currentProxy.getClass() + ". Retrying.", e);
+          
+          if (action.delayMillis > 0) {
+            ThreadUtil.sleepAtLeastIgnoreInterrupts(action.delayMillis);
+          }
+          
+          if (action.action == RetryAction.RetryDecision.FAILOVER_AND_RETRY) {
+            // Make sure that concurrent failed method invocations only cause a
+            // single actual fail over.
+            synchronized (proxyProvider) {
+              if (invocationAttemptFailoverCount == proxyProviderFailoverCount) {
+                proxyProvider.performFailover(currentProxy);
+                proxyProviderFailoverCount++;
+                currentProxy = proxyProvider.getProxy();
+              } else {
+                LOG.warn("A failover has occurred since the start of this method"
+                    + " invocation attempt.");
+              }
+            }
+            invocationFailoverCount++;
+          }
         }
       }
     }
   }
-
+  
+  private static String formatSleepMessage(long millis) {
+    if (millis > 0) {
+      return "after sleeping for " + millis + "ms.";
+    } else {
+      return "immediately.";
+    }
+  }
+  
   private Object invokeMethod(Method method, Object[] args) throws Throwable {
     try {
       if (!method.isAccessible()) {
@@ -137,9 +163,7 @@ class RetryInvocationHandler implements RpcInvocationHandler {
 
   @Override //RpcInvocationHandler
   public ConnectionId getConnectionId() {
-    RpcInvocationHandler inv = (RpcInvocationHandler) Proxy
-        .getInvocationHandler(currentProxy);
-    return inv.getConnectionId();
+    return RPC.getConnectionIdForProxy(currentProxy);
   }
 
 }
