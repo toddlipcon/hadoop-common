@@ -95,19 +95,21 @@ static int convert_java_crc_type(JNIEnv *env, jint crc_type) {
   }
 }
 
-JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeVerifyChunkedSums
-  (JNIEnv *env, jclass clazz,
-    jint bytes_per_checksum, jint j_crc_type,
+/**
+ * Verify parameters for NULL, valid ranges.
+ * Returns non-zero and throws an exception if invalid.
+ */
+static int check_params(JNIEnv *env,
     jobject j_sums, jint sums_offset,
     jobject j_data, jint data_offset, jint data_len,
-    jstring j_filename, jlong base_pos)
+    jint bytes_per_checksum,
+    uint32_t **sums, uint8_t **data)
 {
   if (unlikely(!j_sums || !j_data)) {
     THROW(env, "java/lang/NullPointerException",
       "input ByteBuffers must not be null");
-    return;
+    return 1;
   }
-
   // Convert direct byte buffers to C pointers
   uint8_t *sums_addr = (*env)->GetDirectBufferAddress(env, j_sums);
   uint8_t *data_addr = (*env)->GetDirectBufferAddress(env, j_data);
@@ -115,21 +117,41 @@ JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeVerifyChunk
   if (unlikely(!sums_addr || !data_addr)) {
     THROW(env, "java/lang/IllegalArgumentException",
       "input ByteBuffers must be direct buffers");
-    return;
+    return 1;
   }
   if (unlikely(sums_offset < 0 || data_offset < 0 || data_len < 0)) {
     THROW(env, "java/lang/IllegalArgumentException",
       "bad offsets or lengths");
-    return;
+    return 1;
   }
   if (unlikely(bytes_per_checksum) <= 0) {
     THROW(env, "java/lang/IllegalArgumentException",
       "invalid bytes_per_checksum");
-    return;
+    return 1;
   }
 
-  uint32_t *sums = (uint32_t *)(sums_addr + sums_offset);
-  uint8_t *data = data_addr + data_offset;
+  *sums = (uint32_t *)(sums_addr + sums_offset);
+  *data = data_addr + data_offset;
+  return 0;
+}
+
+JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeVerifyChunkedSums
+  (JNIEnv *env, jclass clazz,
+    jint bytes_per_checksum, jint j_crc_type,
+    jobject j_sums, jint sums_offset,
+    jobject j_data, jint data_offset, jint data_len,
+    jstring j_filename, jlong base_pos)
+{
+  uint32_t *sums;
+  uint8_t *data;
+
+  if (unlikely(check_params(env,
+                   j_sums, sums_offset,
+                   j_data, data_offset, data_len,
+                   bytes_per_checksum,
+                   &sums, &data))) {
+    return; // exception already thrown
+  }
 
   // Convert to correct internal C constant for CRC type
   int crc_type = convert_java_crc_type(env, j_crc_type);
@@ -146,6 +168,39 @@ JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeVerifyChunk
     throw_checksum_exception(
       env, error_data.got_crc, error_data.expected_crc,
       j_filename, pos);
+  } else {
+    THROW(env, "java/lang/AssertionError",
+      "Bad response code from native bulk_verify_crc");
+  }
+}
+
+
+JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeCalculateChunkedSums
+  (JNIEnv *env, jclass clazz,
+    jint bytes_per_checksum, jint j_crc_type,
+    jobject j_sums, jint sums_offset,
+    jobject j_data, jint data_offset, jint data_len)
+{
+  uint32_t *sums;
+  uint8_t *data;
+
+  if (unlikely(check_params(env,
+                   j_sums, sums_offset,
+                   j_data, data_offset, data_len,
+                   bytes_per_checksum,
+                   &sums, &data))) {
+    return; // exception already thrown
+  }
+
+  // Convert to correct internal C constant for CRC type
+  int crc_type = convert_java_crc_type(env, j_crc_type);
+  if (crc_type == -1) return; // exception already thrown
+
+  // Setup complete. Actually calculate checksums.
+  int ret = bulk_calculate_crc(data, data_len, sums, crc_type,
+                               bytes_per_checksum);
+  if (likely(!ret)) {
+    return;
   } else {
     THROW(env, "java/lang/AssertionError",
       "Bad response code from native bulk_verify_crc");

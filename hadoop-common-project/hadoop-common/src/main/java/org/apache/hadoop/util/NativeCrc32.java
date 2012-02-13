@@ -60,11 +60,23 @@ class NativeCrc32 {
         fileName, basePos);
   }
   
+  public static void calculateChunkedSums(int bytesPerSum, int checksumType,
+      ByteBuffer sums, ByteBuffer data) {
+    nativeCalculateChunkedSums(bytesPerSum, checksumType,
+        sums, sums.position(),
+        data, data.position(), data.remaining());
+  }
+
   private static native void nativeVerifyChunkedSums(
       int bytesPerSum, int checksumType,
       ByteBuffer sums, int sumsOffset,
       ByteBuffer data, int dataOffset, int dataLength,
       String fileName, long basePos);
+
+  private static native void nativeCalculateChunkedSums(
+      int bytesPerSum, int checksumType,
+      ByteBuffer sums, int sumsOffset,
+      ByteBuffer data, int dataOffset, int dataLength);
 
   // Copy the constants over from DataChecksum so that javah will pick them up
   // and make them available in the native code header.

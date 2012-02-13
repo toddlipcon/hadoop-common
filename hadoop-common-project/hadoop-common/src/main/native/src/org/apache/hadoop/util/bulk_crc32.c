@@ -25,6 +25,7 @@
 #include <arpa/inet.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include "crc32_zlib_polynomial_tables.h"
 #include "crc32c_tables.h"
@@ -33,17 +34,52 @@
 
 #define USE_PIPELINED
 
+#ifdef USE_PIPELINED
+typedef void(*crc_pipelined_update_func_t)(
+  uint32_t *, uint32_t *, uint32_t *,
+  const uint8_t *, size_t, int);
+static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3,
+  const uint8_t *p_buf, size_t block_size, int num_blocks);
+
+#endif
+
 typedef uint32_t (*crc_update_func_t)(uint32_t, const uint8_t *, size_t);
+
 static uint32_t crc_init();
 static uint32_t crc_val(uint32_t crc);
 static uint32_t crc32_zlib_sb8(uint32_t crc, const uint8_t *buf, size_t length);
 static uint32_t crc32c_sb8(uint32_t crc, const uint8_t *buf, size_t length);
 
-#ifdef USE_PIPELINED
-static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks);
-#endif USE_PIPELINED
 static int cached_cpu_supports_crc32; // initialized by constructor below
 static uint32_t crc32c_hardware(uint32_t crc, const uint8_t* data, size_t length);
+
+#ifdef USE_PIPELINED
+static crc_pipelined_update_func_t ctype_to_pipelined_func(
+    int checksum_type) {
+  if (likely(checksum_type == CRC32C_POLYNOMIAL) &&
+      likely(cached_cpu_supports_crc32)) {
+    return pipelined_crc32c;
+  } else {
+    return NULL;
+  }
+}
+#endif
+
+static inline crc_update_func_t ctype_to_function(
+    int checksum_type) {
+  switch (checksum_type) {
+    case CRC32_ZLIB_POLYNOMIAL:
+      return crc32_zlib_sb8;
+    case CRC32C_POLYNOMIAL:
+      if (likely(cached_cpu_supports_crc32)) {
+        return crc32c_hardware;
+      } else {
+        return crc32c_sb8;
+      }
+    default:
+      return NULL;
+  }
+}
 
 int bulk_verify_crc(const uint8_t *data, size_t data_len,
                     const uint32_t *sums, int checksum_type,
@@ -51,82 +87,18 @@ int bulk_verify_crc(const uint8_t *data, size_t data_len,
                     crc32_error_t *error_info) {
 
 #ifdef USE_PIPELINED
-  uint32_t crc1, crc2, crc3;
-  int n_blocks = data_len / bytes_per_checksum;
-  int remainder = data_len % bytes_per_checksum;
-  int do_pipelined = 0;
+  crc_pipelined_update_func_t pipelined_update = ctype_to_pipelined_func(checksum_type);
+  if (pipelined_update) {
+    return bulk_verify_crc_pipelined(data, data_len, sums, pipelined_update,
+                                     bytes_per_checksum, error_info);
+  }
 #endif
+
   uint32_t crc;
-  crc_update_func_t crc_update_func;
-  switch (checksum_type) {
-    case CRC32_ZLIB_POLYNOMIAL:
-      crc_update_func = crc32_zlib_sb8;
-      break;
-    case CRC32C_POLYNOMIAL:
-      if (likely(cached_cpu_supports_crc32)) {
-        crc_update_func = crc32c_hardware;
-#ifdef USE_PIPELINED
-        do_pipelined = 1;
-#endif
-      } else {
-        crc_update_func = crc32c_sb8;
-      }
-      break;
-    default:
-      return INVALID_CHECKSUM_TYPE;
+  crc_update_func_t crc_update_func = ctype_to_function(checksum_type);
+  if (crc_update_func == NULL) {
+    return INVALID_CHECKSUM_TYPE;
   }
-
-#ifdef USE_PIPELINED
-  if (do_pipelined) {
-    /* Process three blocks at a time */
-    while (likely(n_blocks >= 3)) {
-      crc1 = crc2 = crc3 = crc_init();  
-      pipelined_crc32c(&crc1, &crc2, &crc3, data, bytes_per_checksum, 3);
-
-      crc = ntohl(crc_val(crc1));
-      if ((crc = ntohl(crc_val(crc1))) != *sums)
-        goto return_crc_error;
-      sums++;
-      data += bytes_per_checksum;
-      if ((crc = ntohl(crc_val(crc2))) != *sums)
-        goto return_crc_error;
-      sums++;
-      data += bytes_per_checksum;
-      if ((crc = ntohl(crc_val(crc3))) != *sums)
-        goto return_crc_error;
-      sums++;
-      data += bytes_per_checksum;
-      n_blocks -= 3;
-    }
-
-    /* One or two blocks */
-    if (n_blocks) {
-      crc1 = crc2 = crc_init();
-      pipelined_crc32c(&crc1, &crc2, &crc3, data, bytes_per_checksum, n_blocks);
-
-      if ((crc = ntohl(crc_val(crc1))) != *sums)
-        goto return_crc_error;
-      data += bytes_per_checksum;
-      sums++;
-      if (n_blocks == 2) {
-        if ((crc = ntohl(crc_val(crc2))) != *sums)
-          goto return_crc_error;
-        sums++;
-        data += bytes_per_checksum;
-      }
-    }
- 
-    /* For something smaller than a block */
-    if (remainder) {
-      crc1 = crc_init();
-      pipelined_crc32c(&crc1, &crc2, &crc3, data, remainder, 1);
-
-      if ((crc = ntohl(crc_val(crc1))) != *sums)
-        goto return_crc_error;
-    }
-    return CHECKSUMS_VALID;
-  }
-#endif
 
   while (likely(data_len > 0)) {
     int len = likely(data_len >= bytes_per_checksum) ? bytes_per_checksum : data_len;
@@ -150,6 +122,96 @@ return_crc_error:
   }
   return INVALID_CHECKSUM_DETECTED;
 }
+
+int bulk_calculate_crc(const uint8_t *data, size_t data_len,
+                    uint32_t *sums, int checksum_type,
+                    int bytes_per_checksum) {
+  uint32_t crc;
+  crc_update_func_t crc_update_func = ctype_to_function(checksum_type);
+  if (crc_update_func == NULL) {
+    return INVALID_CHECKSUM_TYPE;
+  }
+
+  while (likely(data_len > 0)) {
+    int len = likely(data_len >= bytes_per_checksum) ? bytes_per_checksum : data_len;
+    crc = crc_init();
+    crc = crc_update_func(crc, data, len);
+    *sums = ntohl(crc_val(crc));
+    data += len;
+    data_len -= len;
+    sums++;
+  }
+  return 0;
+}
+
+
+#ifdef USE_PIPELINED
+int bulk_verify_crc_pipelined(const uint8_t *data, size_t data_len,
+                    const uint32_t *sums,
+                    crc_pipelined_update_func_t update_func,
+                    int bytes_per_checksum,
+                    crc32_error_t *error_info) {
+
+  uint32_t crc1, crc2, crc3, crc;
+  int n_blocks = data_len / bytes_per_checksum;
+  int remainder = data_len % bytes_per_checksum;
+
+  /* Process three blocks at a time */
+  while (likely(n_blocks >= 3)) {
+    crc1 = crc2 = crc3 = crc_init();  
+    update_func(&crc1, &crc2, &crc3, data, bytes_per_checksum, 3);
+
+    if ((crc = ntohl(crc_val(crc1))) != *sums)
+      goto return_crc_error;
+    sums++;
+    data += bytes_per_checksum;
+    if ((crc = ntohl(crc_val(crc2))) != *sums)
+      goto return_crc_error;
+    sums++;
+    data += bytes_per_checksum;
+    if ((crc = ntohl(crc_val(crc3))) != *sums)
+      goto return_crc_error;
+    sums++;
+    data += bytes_per_checksum;
+    n_blocks -= 3;
+  }
+
+  /* One or two blocks */
+  if (n_blocks) {
+    crc1 = crc2 = crc_init();
+    update_func(&crc1, &crc2, &crc3, data, bytes_per_checksum, n_blocks);
+
+    if ((crc = ntohl(crc_val(crc1))) != *sums)
+      goto return_crc_error;
+    data += bytes_per_checksum;
+    sums++;
+    if (n_blocks == 2) {
+      if ((crc = ntohl(crc_val(crc2))) != *sums)
+        goto return_crc_error;
+      sums++;
+      data += bytes_per_checksum;
+    }
+  }
+ 
+  /* For something smaller than a block */
+  if (remainder) {
+    crc1 = crc_init();
+    update_func(&crc1, &crc2, &crc3, data, remainder, 1);
+
+    if ((crc = ntohl(crc_val(crc1))) != *sums)
+      goto return_crc_error;
+  }
+  return CHECKSUMS_VALID;
+
+return_crc_error:
+  if (error_info != NULL) {
+    error_info->got_crc = crc;
+    error_info->expected_crc = *sums;
+    error_info->bad_data = data;
+  }
+  return INVALID_CHECKSUM_DETECTED;
+}
+#endif
 
 
 /**
@@ -365,7 +427,8 @@ static uint32_t crc32c_hardware(uint32_t crc, const uint8_t* p_buf, size_t lengt
  *   block_size : The size of each block in bytes.
  *   num_blocks : The number of blocks to work on. Min = 1, Max = 3
  */
-static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3, const uint8_t *p_buf, size_t block_size, int num_blocks) {
+static void pipelined_crc32c(uint32_t *crc1, uint32_t *crc2, uint32_t *crc3,
+  const uint8_t *p_buf, size_t block_size, int num_blocks) {
   uint64_t c1 = *crc1;
   uint64_t c2 = *crc2;
   uint64_t c3 = *crc3;

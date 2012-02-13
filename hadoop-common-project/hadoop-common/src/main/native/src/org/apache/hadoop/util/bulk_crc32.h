@@ -18,6 +18,7 @@
 #ifndef BULK_CRC32_H_INCLUDED
 #define BULK_CRC32_H_INCLUDED
 
+#include <unistd.h>
 #include <stdint.h>
 
 // Constants for different CRC algorithms
@@ -53,5 +54,9 @@ extern int bulk_verify_crc(const uint8_t *data, size_t data_len,
     const uint32_t *sums, int checksum_type,
     int bytes_per_checksum,
     crc32_error_t *error_info);
+
+extern int bulk_calculate_crc(const uint8_t *data, size_t data_len,
+                    uint32_t *sums, int checksum_type,
+                    int bytes_per_checksum);
 
 #endif

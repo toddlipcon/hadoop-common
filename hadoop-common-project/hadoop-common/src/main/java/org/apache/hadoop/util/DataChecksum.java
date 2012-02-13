@@ -357,8 +357,13 @@ public class DataChecksum implements Checksum {
       calculateChunkedSums(data.array(), data.arrayOffset() + data.position(), data.remaining(),
           checksums.array(), checksums.arrayOffset() + checksums.position());
       return;
-    }
+    } 
     
+    if (NativeCrc32.isAvailable()) {
+      NativeCrc32.calculateChunkedSums(bytesPerChecksum, type, checksums, data);
+      return;
+    }
+
     data.mark();
     checksums.mark();
     try {
