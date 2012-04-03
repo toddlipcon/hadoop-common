@@ -48,10 +48,12 @@ import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.NodeType;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants.StartupOption;
 import org.apache.hadoop.hdfs.server.common.InconsistentFSStateException;
 import org.apache.hadoop.hdfs.server.common.Storage;
+import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.common.UpgradeManager;
 import org.apache.hadoop.hdfs.server.common.Util;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.util.AtomicFileOutputStream;
+import org.apache.hadoop.hdfs.util.LongContainingFile;
 
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.net.DNS;
@@ -66,7 +68,7 @@ import com.google.common.collect.Maps;
  * the NameNode.
  */
 @InterfaceAudience.Private
-public class NNStorage extends Storage implements Closeable {
+public class NNStorage extends Storage implements Closeable, StorageErrorReporter {
   private static final Log LOG = LogFactory.getLog(NNStorage.class.getName());
 
   static final String DEPRECATED_MESSAGE_DIGEST_PROPERTY = "imageMD5Digest";
@@ -422,18 +424,7 @@ public class NNStorage extends Storage implements Closeable {
    */
   static long readTransactionIdFile(StorageDirectory sd) throws IOException {
     File txidFile = getStorageFile(sd, NameNodeFile.SEEN_TXID);
-    long txid = 0L;
-    if (txidFile.exists() && txidFile.canRead()) {
-      BufferedReader br = new BufferedReader(new FileReader(txidFile));
-      try {
-        txid = Long.valueOf(br.readLine());
-        br.close();
-        br = null;
-      } finally {
-        IOUtils.cleanup(LOG, br);
-      }
-    }
-    return txid;
+    return LongContainingFile.read(txidFile, 0);
   }
   
   /**
@@ -446,15 +437,7 @@ public class NNStorage extends Storage implements Closeable {
     Preconditions.checkArgument(txid >= 0, "bad txid: " + txid);
     
     File txIdFile = getStorageFile(sd, NameNodeFile.SEEN_TXID);
-    OutputStream fos = new AtomicFileOutputStream(txIdFile);
-    try {
-      fos.write(String.valueOf(txid).getBytes());
-      fos.write('\n');
-      fos.close();
-      fos = null;
-    } finally {
-      IOUtils.cleanup(LOG, fos);
-    }
+    LongContainingFile.write(txIdFile, txid);
   }
 
   /**
@@ -884,7 +867,7 @@ public class NNStorage extends Storage implements Closeable {
    * @param sd A storage directory to mark as errored.
    * @throws IOException
    */
-  void reportErrorsOnDirectory(StorageDirectory sd) {
+  public void reportErrorsOnDirectory(StorageDirectory sd) {
     LOG.error("Error reported on storage directory " + sd);
 
     String lsd = listStorageDirectories();
