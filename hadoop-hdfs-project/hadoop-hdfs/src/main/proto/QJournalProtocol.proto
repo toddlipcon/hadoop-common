@@ -1,0 +1,136 @@
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+option java_package = "org.apache.hadoop.hdfs.qjournal.protocol";
+option java_outer_classname = "QJournalProtocolProtos";
+option java_generic_services = true;
+option java_generate_equals_and_hash = true;
+
+import "hdfs.proto";
+
+message RequestInfo {
+  required uint64 epoch = 1;
+  required uint64 ipcSerialNumber = 2;
+}
+
+message LogSegmentProto {
+  required uint64 startTxId = 1;
+  required uint64 endTxId = 2;
+  required bool isInProgress = 3;
+}
+
+/**
+ * TODO
+ * firstTxnId - the first txid in the batch to write
+ * numTxns - Number of transactions in the batch
+ * records - bytes containing serialized journal records for this batch
+ */
+message JournalRequestProto {
+  required RequestInfo reqInfo = 1;
+  required uint64 firstTxnId = 2;
+  required uint32 numTxns = 3;
+  required bytes records = 4;
+}
+
+/**
+ * void response
+ */
+message JournalResponseProto { 
+}
+
+message StartLogSegmentRequestProto {
+  required RequestInfo reqInfo = 1;
+  required uint64 txid = 2; // Transaction ID
+}
+
+/**
+ * void response
+ */
+message StartLogSegmentResponseProto { 
+}
+
+/**
+ * registration - the registration info of the active NameNode
+ * txid - first txid in the new log
+ */
+message FinalizeLogSegmentRequestProto {
+  required RequestInfo reqInfo = 1;
+  required uint64 startTxId = 2;
+  required uint64 endTxId = 3;
+}
+
+/**
+ * void response
+ */
+message FinalizeLogSegmentResponseProto { 
+}
+
+/**
+ * getEpochInfo()
+ */
+message GetEpochInfoRequestProto {
+}
+
+message GetEpochInfoResponseProto {
+  required uint64 lastPromisedEpoch = 1;
+}
+
+/**
+ * newEpoch()
+ */
+message NewEpochRequestProto {
+  required uint64 epoch = 1;
+}
+
+message NewEpochResponseProto {
+  required LogSegmentProto lastSegment = 1;
+}
+
+
+/**
+ * Protocol used to journal edits to a remote node. Currently,
+ * this is used to publish edits from the NameNode to a BackupNode.
+ *
+ * See the request and response for details of rpc call.
+ */
+service QJournalProtocolService {
+  rpc getEpochInfo(GetEpochInfoRequestProto) returns (GetEpochInfoResponseProto);
+
+  rpc newEpoch(NewEpochRequestProto) returns (NewEpochResponseProto);
+
+  /**
+   * Request sent by active namenode to backup node via 
+   * EditLogBackupOutputStream to stream editlog records.
+   */
+  rpc journal(JournalRequestProto) returns (JournalResponseProto);
+
+  /**
+   * Request sent by active namenode to backup node to notify 
+   * that the NameNode has rolled its edit logs and is now writing a 
+   * new log segment.
+   */
+  rpc startLogSegment(StartLogSegmentRequestProto) 
+      returns (StartLogSegmentResponseProto);
+
+  rpc finalizeLogSegment(FinalizeLogSegmentRequestProto)
+      returns (FinalizeLogSegmentResponseProto);
+/*
+  rpc readLog(ReadLogRequestProto)
+      returns (ReadLogResponseProto);
+*/
+}
