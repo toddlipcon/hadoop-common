@@ -192,7 +192,7 @@ public class GetImageServlet extends HttpServlet {
     }
   }
   
-  private static void setFileNameHeaders(HttpServletResponse response,
+  public static void setFileNameHeaders(HttpServletResponse response,
       File file) {
     response.setHeader(CONTENT_DISPOSITION, "attachment; filename=" +
         file.getName());
@@ -204,7 +204,7 @@ public class GetImageServlet extends HttpServlet {
    * @param conf configuration
    * @return a data transfer throttler
    */
-  private final DataTransferThrottler getThrottler(Configuration conf) {
+  public static DataTransferThrottler getThrottler(Configuration conf) {
     long transferBandwidth = 
       conf.getLong(DFSConfigKeys.DFS_IMAGE_TRANSFER_RATE_KEY,
                    DFSConfigKeys.DFS_IMAGE_TRANSFER_RATE_DEFAULT);
@@ -262,7 +262,7 @@ public class GetImageServlet extends HttpServlet {
    * Set headers for content length, and, if available, md5.
    * @throws IOException 
    */
-  private void setVerificationHeaders(HttpServletResponse response, File file)
+  public static void setVerificationHeaders(HttpServletResponse response, File file)
   throws IOException {
     response.setHeader(TransferFsImage.CONTENT_LENGTH,
         String.valueOf(file.length()));
@@ -302,7 +302,7 @@ public class GetImageServlet extends HttpServlet {
   }
 
   
-  static class GetImageParams {
+  public static class GetImageParams {
     private boolean isGetImage;
     private boolean isGetEdit;
     private boolean isPutImage;
@@ -382,7 +382,7 @@ public class GetImageServlet extends HttpServlet {
       return endTxId;
     }
 
-    boolean isGetEdit() {
+    public boolean isGetEdit() {
       return isGetEdit;
     }
 
