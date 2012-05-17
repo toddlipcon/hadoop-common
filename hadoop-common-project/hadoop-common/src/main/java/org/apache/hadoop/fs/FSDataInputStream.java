@@ -28,7 +28,7 @@ import org.apache.hadoop.classification.InterfaceStability;
 @InterfaceAudience.Public
 @InterfaceStability.Stable
 public class FSDataInputStream extends DataInputStream
-    implements Seekable, PositionedReadable, Closeable, ByteBufferReadable {
+    implements Seekable, PositionedReadable, Closeable, ByteBufferReadable, HasFd {
 
   public FSDataInputStream(InputStream in)
     throws IOException {
@@ -116,6 +116,17 @@ public class FSDataInputStream extends DataInputStream
   @InterfaceAudience.LimitedPrivate({"HDFS"})
   public InputStream getWrappedStream() {
     return in;
+  }
+
+  @Override
+  public FileDescriptor getFD() throws IOException {
+    if (in instanceof HasFd) {
+      return ((HasFd) in).getFD();
+    } else if (in instanceof FileInputStream) {
+      return ((FileInputStream) in).getFD();
+    } else {
+      return null;
+    }
   }
 
   public int read(ByteBuffer buf) throws IOException {

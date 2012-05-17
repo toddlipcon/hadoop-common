@@ -21,6 +21,7 @@ package org.apache.hadoop.fs;
 import java.io.BufferedOutputStream;
 import java.io.DataOutput;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -111,7 +112,7 @@ public class RawLocalFileSystem extends FileSystem {
   /*******************************************************
    * For open()'s FSInputStream.
    *******************************************************/
-  class LocalFSFileInputStream extends FSInputStream {
+  class LocalFSFileInputStream extends FSInputStream implements HasFd {
     private FileInputStream fis;
     private long position;
 
@@ -180,6 +181,11 @@ public class RawLocalFileSystem extends FileSystem {
         this.position += value;
       }
       return value;
+    }
+
+    @Override
+    public FileDescriptor getFD() throws IOException {
+      return fis.getFD();
     }
   }
   
