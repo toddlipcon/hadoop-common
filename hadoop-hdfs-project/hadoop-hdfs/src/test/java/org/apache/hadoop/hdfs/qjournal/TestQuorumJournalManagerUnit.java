@@ -25,6 +25,7 @@ import java.util.List;
 
 import org.apache.commons.logging.impl.Log4JLogger;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
@@ -65,6 +66,15 @@ public class TestQuorumJournalManagerUnit {
       }
     };
     qjm.setConf(conf);
+    
+    for (AsyncLogger logger : spyLoggers) {
+      futureReturns(GetEpochInfoResponseProto.newBuilder()
+          .setLastPromisedEpoch(0)
+          .build())
+        .when(logger).getEpochInfo();
+      
+      futureReturns(null).when(logger).newEpoch(Mockito.anyLong());
+    }
   }
   
   private AsyncLogger mockLogger() {
@@ -89,7 +99,7 @@ public class TestQuorumJournalManagerUnit {
     futureReturns(null).when(spyLoggers.get(2)).startLogSegment(Mockito.anyLong());
     qjm.startLogSegment(1);
   }
-  
+
   @Test
   public void testQuorumOfLoggersStartOk() throws Exception {
     futureReturns(null).when(spyLoggers.get(0)).startLogSegment(Mockito.anyLong());

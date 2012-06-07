@@ -22,6 +22,7 @@ import java.net.InetSocketAddress;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.QJournalProtocolService;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
@@ -85,8 +86,8 @@ class JournalNodeRpcServer implements QJournalProtocol {
   }
 
   @Override
-  public long getEpochInfo() throws IOException {
-    return jn.getLastPromisedEpoch();
+  public GetEpochInfoResponseProto getEpochInfo() throws IOException {
+    return jn.getEpochInfo();
   }
 
   @Override

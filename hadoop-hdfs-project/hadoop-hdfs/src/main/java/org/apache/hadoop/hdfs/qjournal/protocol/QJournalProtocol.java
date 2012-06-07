@@ -21,6 +21,7 @@ import java.io.IOException;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.security.KerberosInfo;
 
@@ -36,7 +37,7 @@ import org.apache.hadoop.security.KerberosInfo;
 public interface QJournalProtocol {
   public static final long versionID = 1L;
 
-  public long getEpochInfo() throws IOException;
+  public GetEpochInfoResponseProto getEpochInfo() throws IOException;
   public NewEpochResponseProto newEpoch(long epoch)
     throws IOException;
   

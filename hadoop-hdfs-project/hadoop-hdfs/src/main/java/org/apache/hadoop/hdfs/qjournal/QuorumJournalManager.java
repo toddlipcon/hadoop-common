@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.Collection;
 import java.util.List;
 
 import org.apache.commons.logging.Log;
@@ -116,20 +117,6 @@ public class QuorumJournalManager implements JournalManager, Configurable {
   }
 
   @Override
-  public EditLogInputStream getInputStream(long fromTxnId, boolean inProgressOk)
-      throws IOException {
-    // TODO Auto-generated method stub
-    return null;
-  }
-
-  @Override
-  public long getNumberOfTransactions(long fromTxnId, boolean inProgressOk)
-      throws IOException, CorruptionException {
-    // TODO Auto-generated method stub
-    return 0;
-  }
-
-  @Override
   public void setOutputBufferCapacity(int size) {
     // TODO Auto-generated method stub
     
@@ -162,6 +149,13 @@ public class QuorumJournalManager implements JournalManager, Configurable {
   @Override
   public Configuration getConf() {
     return conf;
+  }
+
+  @Override
+  public void selectInputStreams(Collection<EditLogInputStream> streams,
+      long fromTxnId, boolean inProgressOk) {
+    // TODO Auto-generated method stub
+    
   }
 
 }

@@ -25,7 +25,6 @@ import java.io.IOException;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
-import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.Test;
 
 /**

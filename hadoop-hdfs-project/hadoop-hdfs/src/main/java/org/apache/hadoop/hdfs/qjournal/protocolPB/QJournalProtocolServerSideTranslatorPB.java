@@ -38,10 +38,7 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
   public GetEpochInfoResponseProto getEpochInfo(RpcController controller,
       GetEpochInfoRequestProto request) throws ServiceException {
     try {
-      long epoch = impl.getEpochInfo();
-      return GetEpochInfoResponseProto.newBuilder()
-        .setLastPromisedEpoch(epoch)
-        .build();
+      return impl.getEpochInfo();
     } catch (IOException ioe) {
       throw new ServiceException(ioe);
     }

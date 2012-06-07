@@ -61,11 +61,11 @@ public class TestJournalNode {
   
   @Test
   public void testEpochHandling() throws Exception {
-    assertEquals(0, jn.getLastPromisedEpoch());
+    assertEquals(0, jn.getEpochInfo());
     jn.newEpoch(1);
-    assertEquals(1, jn.getLastPromisedEpoch());
+    assertEquals(1, jn.getEpochInfo());
     jn.newEpoch(3);
-    assertEquals(3, jn.getLastPromisedEpoch());
+    assertEquals(3, jn.getEpochInfo());
     try {
       NewEpochResponseProto newEpoch = jn.newEpoch(3);
       // TODO: maybe this should be returning a different value

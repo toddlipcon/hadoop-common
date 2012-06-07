@@ -17,6 +17,7 @@
  */
 package org.apache.hadoop.hdfs.qjournal;
 
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -27,7 +28,7 @@ interface AsyncLogger {
 
   public ListenableFuture<Void> startLogSegment(long txid);
 
-  public ListenableFuture<Long> getEpochInfo();
+  public ListenableFuture<GetEpochInfoResponseProto> getEpochInfo();
 
   public ListenableFuture<NewEpochResponseProto> newEpoch(long epoch);
 

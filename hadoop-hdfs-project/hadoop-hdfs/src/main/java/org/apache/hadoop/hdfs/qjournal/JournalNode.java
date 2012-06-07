@@ -28,6 +28,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.LogSegmentProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
@@ -75,7 +76,13 @@ public class JournalNode implements Tool, Configurable {
   // f_p in ZAB terminology
   private long lastPromisedEpoch = -1;
   
-  public synchronized long getLastPromisedEpoch() throws IOException {
+  public GetEpochInfoResponseProto getEpochInfo() throws IOException {
+    return GetEpochInfoResponseProto.newBuilder()
+      .setLastPromisedEpoch(getLastPromisedEpoch())
+      .build();
+  }
+  
+  private synchronized long getLastPromisedEpoch() throws IOException {
     if (lastPromisedEpoch < 0) {
       lastPromisedEpoch = LongContainingFile.read(
           getPromisedEpochFile(), 0);
@@ -87,7 +94,7 @@ public class JournalNode implements Tool, Configurable {
       throws IOException {
     if (epoch <= getLastPromisedEpoch()) {
       throw new IOException("Proposed epoch " + epoch + " <= last promise " +
-          getLastPromisedEpoch());
+          getEpochInfo());
     }
     LongContainingFile.write(getPromisedEpochFile(), epoch);
     lastPromisedEpoch = epoch;

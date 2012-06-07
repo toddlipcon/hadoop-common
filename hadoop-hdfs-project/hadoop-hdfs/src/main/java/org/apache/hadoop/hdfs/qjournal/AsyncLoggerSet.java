@@ -25,6 +25,7 @@ import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 
 import com.google.common.collect.ImmutableList;
@@ -48,9 +49,15 @@ class AsyncLoggerSet {
   }
   
   long createNewUniqueEpoch() throws IOException {
-    Map<AsyncLogger, Long> lastPromises =
+    Map<AsyncLogger, GetEpochInfoResponseProto> lastPromises =
       waitForWriteQuorum(getEpochInfo(), NEWEPOCH_TIMEOUT_MS);
-    long maxPromised = Collections.max(lastPromises.values());
+    
+    long maxPromised = Long.MIN_VALUE;
+    for (GetEpochInfoResponseProto resp : lastPromises.values()) {
+      maxPromised = Math.max(maxPromised, resp.getLastPromisedEpoch());
+    }
+    assert maxPromised >= 0;
+    
     long myEpoch = maxPromised + 1;
     waitForWriteQuorum(newEpoch(myEpoch), NEWEPOCH_TIMEOUT_MS);
     return myEpoch;
@@ -90,8 +97,9 @@ class AsyncLoggerSet {
     return q.getResults();
   }
   
-  private QuorumCall<AsyncLogger, Long> getEpochInfo() {
-    Map<AsyncLogger, ListenableFuture<Long>> calls = Maps.newHashMap();
+  private QuorumCall<AsyncLogger, GetEpochInfoResponseProto> getEpochInfo() {
+    Map<AsyncLogger, ListenableFuture<GetEpochInfoResponseProto>> calls =
+        Maps.newHashMap();
     for (AsyncLogger logger : loggers) {
       calls.put(logger, logger.getEpochInfo());
     }

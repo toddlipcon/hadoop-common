@@ -24,6 +24,7 @@ import java.util.concurrent.Executors;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
@@ -93,10 +94,10 @@ class IPCLoggerChannel implements AsyncLogger {
 
 
   @Override
-  public ListenableFuture<Long> getEpochInfo() {
-    return executor.submit(new Callable<Long>() {
+  public ListenableFuture<GetEpochInfoResponseProto> getEpochInfo() {
+    return executor.submit(new Callable<GetEpochInfoResponseProto>() {
       @Override
-      public Long call() throws IOException {
+      public GetEpochInfoResponseProto call() throws IOException {
         return getProxy().getEpochInfo();
       }
     });

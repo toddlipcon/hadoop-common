@@ -21,7 +21,6 @@ import org.apache.hadoop.ipc.ProtobufHelper;
 import org.apache.hadoop.ipc.ProtocolMetaInterface;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RpcClientUtil;
-import org.apache.hadoop.ipc.RpcPayloadHeader.RpcKind;
 
 import com.google.protobuf.RpcController;
 import com.google.protobuf.ServiceException;
@@ -50,13 +49,11 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
 
 
   @Override
-  public long getEpochInfo() throws IOException {
+  public GetEpochInfoResponseProto getEpochInfo() throws IOException {
     try {
       GetEpochInfoRequestProto req = GetEpochInfoRequestProto.newBuilder()
           .build();
-      GetEpochInfoResponseProto responseProto =
-        rpcProxy.getEpochInfo(NULL_CONTROLLER, req);
-      return responseProto.getLastPromisedEpoch();
+      return rpcProxy.getEpochInfo(NULL_CONTROLLER, req);
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
     }
@@ -127,10 +124,9 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
   }
 
 
-  @Override
   public boolean isMethodSupported(String methodName) throws IOException {
-    return RpcClientUtil.isMethodSupported(rpcProxy, QJournalProtocolPB.class,
-        RpcKind.RPC_PROTOCOL_BUFFER,
+    return RpcClientUtil.isMethodSupported(rpcProxy,
+        QJournalProtocolPB.class, RPC.RpcKind.RPC_PROTOCOL_BUFFER,
         RPC.getProtocolVersion(QJournalProtocolPB.class), methodName);
   }
 

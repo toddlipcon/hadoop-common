@@ -38,7 +38,6 @@ import org.apache.hadoop.hdfs.server.protocol.HeartbeatResponse;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.ipc.StandbyException;
 import org.apache.hadoop.security.AccessControlException;
-import org.apache.tools.ant.taskdefs.Mkdir;
 import org.mockito.Mockito;
 
 /**
@@ -186,7 +185,7 @@ public class NameNodeAdapter {
   }
   
   public static FSEditLogOp createMkdirOp(String path) {
-    MkdirOp op = MkdirOp.getInstance()
+    MkdirOp op = MkdirOp.getInstance(new FSEditLogOp.OpInstanceCache())
       .setPath(path)
       .setTimestamp(0)
       .setPermissionStatus(new PermissionStatus(
