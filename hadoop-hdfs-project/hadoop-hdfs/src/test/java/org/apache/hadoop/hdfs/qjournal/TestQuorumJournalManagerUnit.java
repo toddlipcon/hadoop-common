@@ -21,6 +21,7 @@ import static org.junit.Assert.fail;
 import static org.mockito.Matchers.eq;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.List;
 
 import org.apache.commons.logging.impl.Log4JLogger;
@@ -53,20 +54,19 @@ public class TestQuorumJournalManagerUnit {
   private QuorumJournalManager qjm;
   
   @Before
-  public void setup() {
+  public void setup() throws Exception {
     spyLoggers = ImmutableList.of(
         mockLogger(),
         mockLogger(),
         mockLogger());
 
-    qjm = new QuorumJournalManager() {
+    qjm = new QuorumJournalManager(conf, new URI("qjournal:///")) {
       @Override
       protected List<AsyncLogger> createLoggers() {
         return spyLoggers;
       }
     };
-    qjm.setConf(conf);
-    
+
     for (AsyncLogger logger : spyLoggers) {
       futureReturns(GetEpochInfoResponseProto.newBuilder()
           .setLastPromisedEpoch(0)

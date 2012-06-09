@@ -41,25 +41,40 @@ final class NameNodeResourcePolicy {
   static boolean areResourcesAvailable(
       Collection<? extends CheckableNameNodeResource> resources,
       int minimumRedundantResources) {
+
+    // TODO: workaround:
+    // - during startup, if there are no edits dirs on disk, then there is
+    // a call to areResourcesAvailable() with no dirs at all, which was
+    // previously causing the NN to enter safemode
+    if (resources.isEmpty()) {
+      return true;
+    }
     
     int requiredResourceCount = 0;
     int redundantResourceCount = 0;
     int disabledRedundantResourceCount = 0;
     for (CheckableNameNodeResource resource : resources) {
+      System.err.println("looking at rsrc " + resource);
       if (!resource.isRequired()) {
         redundantResourceCount++;
         if (!resource.isResourceAvailable()) {
+          System.err.println("redundant rsrc " + resource + " not available");
           disabledRedundantResourceCount++;
         }
       } else {
         requiredResourceCount++;
         if (!resource.isResourceAvailable()) {
+          System.err.println("resource " + resource + " not avail");
           // Short circuit - a required resource is not available.
           return false;
         }
       }
     }
     
+    System.err.println("resource count: req: " + requiredResourceCount + " red: " + redundantResourceCount);
+    if (redundantResourceCount == 0 && requiredResourceCount == 0) {
+      new Exception().printStackTrace();
+    }
     if (redundantResourceCount == 0) {
       // If there are no redundant resources, return true if there are any
       // required resources available.

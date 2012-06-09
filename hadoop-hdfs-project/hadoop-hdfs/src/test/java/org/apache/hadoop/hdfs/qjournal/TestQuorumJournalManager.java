@@ -20,7 +20,7 @@ package org.apache.hadoop.hdfs.qjournal;
 import static org.junit.Assert.*;
 
 import java.io.File;
-import java.io.IOException;
+import java.net.URI;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
@@ -33,14 +33,14 @@ import org.junit.Test;
  */
 public class TestQuorumJournalManager {
   @Test
-  public void testSingleWriter() throws IOException {
+  public void testSingleWriter() throws Exception {
     Configuration conf = new Configuration();
     MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf).build();
     cluster.start();
     try {
       cluster.setupClientConfigs(conf);
-      QuorumJournalManager qjm = new QuorumJournalManager();
-      qjm.setConf(conf);
+      QuorumJournalManager qjm = new QuorumJournalManager(conf,
+          new URI("qjournal://"));
       EditLogOutputStream stm = qjm.startLogSegment(1);
       // Should create in-progress
       assertExistsInQuorum(cluster,

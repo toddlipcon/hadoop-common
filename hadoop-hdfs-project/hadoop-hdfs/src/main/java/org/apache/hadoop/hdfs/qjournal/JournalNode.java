@@ -82,7 +82,7 @@ public class JournalNode implements Tool, Configurable {
       .build();
   }
   
-  private synchronized long getLastPromisedEpoch() throws IOException {
+  synchronized long getLastPromisedEpoch() throws IOException {
     if (lastPromisedEpoch < 0) {
       lastPromisedEpoch = LongContainingFile.read(
           getPromisedEpochFile(), 0);

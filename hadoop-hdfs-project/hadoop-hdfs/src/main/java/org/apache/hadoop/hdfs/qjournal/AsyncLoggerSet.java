@@ -18,7 +18,6 @@
 package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
@@ -48,6 +47,12 @@ class AsyncLoggerSet {
     this.loggers = ImmutableList.copyOf(loggers);
   }
   
+  /**
+   * Fence any previous writers, and obtain a unique epoch number
+   * for write-access to the journal nodes.
+   * @return the epoch number
+   * @throws IOException
+   */
   long createNewUniqueEpoch() throws IOException {
     Map<AsyncLogger, GetEpochInfoResponseProto> lastPromises =
       waitForWriteQuorum(getEpochInfo(), NEWEPOCH_TIMEOUT_MS);
@@ -115,7 +120,7 @@ class AsyncLoggerSet {
     return QuorumCall.create(calls);    
   }
 
-  QuorumCall<AsyncLogger, Void> startLogSegment(
+  public QuorumCall<AsyncLogger, Void> startLogSegment(
       long txid) {
     Map<AsyncLogger, ListenableFuture<Void>> calls = Maps.newHashMap();
     for (AsyncLogger logger : loggers) {
@@ -133,7 +138,7 @@ class AsyncLoggerSet {
     return QuorumCall.create(calls);
   }
   
-  QuorumCall<AsyncLogger, Void> sendEdits(
+  public QuorumCall<AsyncLogger, Void> sendEdits(
       long firstTxnId, int numTxns, byte[] data) {
     Map<AsyncLogger, ListenableFuture<Void>> calls = Maps.newHashMap();
     for (AsyncLogger logger : loggers) {

@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.util.Collection;
 import java.util.List;
 
@@ -40,7 +41,7 @@ import com.google.common.collect.Lists;
  * requiring a quorum of nodes to ack each write.
  */
 @InterfaceAudience.Private
-public class QuorumJournalManager implements JournalManager, Configurable {
+public class QuorumJournalManager implements JournalManager {
   static final Log LOG = LogFactory.getLog(QuorumJournalManager.class);
 
   static final String LOGGER_ADDRESSES_KEY =
@@ -49,14 +50,22 @@ public class QuorumJournalManager implements JournalManager, Configurable {
 
   private static final int START_SEGMENT_TIMEOUT_MS = 20000;
 
-  private Configuration conf;
+  private final Configuration conf;
+  private final URI uri;
   private boolean initted;
   
   private AsyncLoggerSet loggers;
   private static final long INVALID_EPOCH = -1;
   private long myEpoch = INVALID_EPOCH;
+
   
-  private synchronized void init() throws IOException {
+  public QuorumJournalManager(Configuration conf,
+      URI uri) {
+    this.conf = conf;
+    this.uri = uri;
+  }
+  
+  private synchronized void initEpoch() throws IOException {
     if (initted) return;
     Preconditions.checkState(conf != null);
     
@@ -102,7 +111,7 @@ public class QuorumJournalManager implements JournalManager, Configurable {
 
   @Override
   public EditLogOutputStream startLogSegment(long txId) throws IOException {
-    init();
+    initEpoch();
     QuorumCall<AsyncLogger,Void> q = loggers.startLogSegment(txId);
     loggers.waitForWriteQuorum(q, START_SEGMENT_TIMEOUT_MS);
     return new QuorumOutputStream(loggers);
@@ -130,7 +139,7 @@ public class QuorumJournalManager implements JournalManager, Configurable {
 
   @Override
   public void recoverUnfinalizedSegments() throws IOException {
-    // TODO Auto-generated method stub
+    throw new UnsupportedOperationException();
     
   }
 
@@ -140,22 +149,15 @@ public class QuorumJournalManager implements JournalManager, Configurable {
     
   }
 
-
-  @Override
-  public void setConf(Configuration conf) {
-    this.conf = conf;
-  }
-
-  @Override
-  public Configuration getConf() {
-    return conf;
-  }
-
   @Override
   public void selectInputStreams(Collection<EditLogInputStream> streams,
       long fromTxnId, boolean inProgressOk) {
     // TODO Auto-generated method stub
-    
+  }
+  
+  @Override
+  public String toString() {
+    return "Quorum journal manager " + uri;
   }
 
 }
