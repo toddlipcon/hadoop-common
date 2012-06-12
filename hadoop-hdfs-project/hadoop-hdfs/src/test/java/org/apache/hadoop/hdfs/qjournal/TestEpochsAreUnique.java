@@ -52,7 +52,8 @@ public class TestEpochsAreUnique {
       for (int i = 0; i < 5; i++) {
         AsyncLoggerSet als = new AsyncLoggerSet(
             QuorumJournalManager.createLoggers(conf));
-        assertEquals(i + 1, als.createNewUniqueEpoch());
+        als.createNewUniqueEpoch();
+        assertEquals(i + 1, als.getEpoch());
       }
       
       long prevEpoch = 5;
@@ -64,7 +65,8 @@ public class TestEpochsAreUnique {
         long newEpoch = -1;
         while (true) {
           try {
-            newEpoch = als.createNewUniqueEpoch();
+            als.createNewUniqueEpoch();
+            newEpoch = als.getEpoch();
             break;
           } catch (IOException ioe) {
             // It's OK to fail to create an epoch, since we randomly inject

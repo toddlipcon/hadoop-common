@@ -641,4 +641,5 @@ public class JournalService implements JournalServiceProtocols {
       }
     }
   }
+  
 }

@@ -21,19 +21,26 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
-import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.JournalManager;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.net.NetUtils;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Lists;
 
 /**
@@ -52,11 +59,9 @@ public class QuorumJournalManager implements JournalManager {
 
   private final Configuration conf;
   private final URI uri;
-  private boolean initted;
+  private boolean isActiveWriter;
   
   private AsyncLoggerSet loggers;
-  private static final long INVALID_EPOCH = -1;
-  private long myEpoch = INVALID_EPOCH;
 
   
   public QuorumJournalManager(Configuration conf,
@@ -65,20 +70,56 @@ public class QuorumJournalManager implements JournalManager {
     this.uri = uri;
   }
   
-  private synchronized void initEpoch() throws IOException {
-    if (initted) return;
-    Preconditions.checkState(conf != null);
-    
+  private synchronized void becomeActiveWriter() throws IOException {
+    Preconditions.checkState(!isActiveWriter, "already active writer");
+    Preconditions.checkState(conf != null, "must be configured");
+
+    assert loggers == null;
     this.loggers = new AsyncLoggerSet(createLoggers());
     
-    myEpoch = loggers.createNewUniqueEpoch();
-    loggers.setEpoch(myEpoch);
+    Map<AsyncLogger, NewEpochResponseProto> resps =
+        loggers.createNewUniqueEpoch();
+    LOG.info("newEpoch(" + getWriterEpoch() + ") responses:\n" +
+        Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
+
+    Entry<AsyncLogger, NewEpochResponseProto> newestLogger = Collections.max(
+        resps.entrySet(), RecoveryComparator.INSTANCE);
+    
+    LOG.info("Newest logger: " + newestLogger);
+    for (Entry<AsyncLogger, NewEpochResponseProto> resp : resps.entrySet()) {
+      if (RecoveryComparator.INSTANCE.compare(resp, newestLogger) < 0) {
+        LOG.info("Older logger needs sync: " + resp);
+        throw new UnsupportedOperationException("TODO");
+      }
+    }
+    
+    isActiveWriter = true;
   }
   
+  private static class RecoveryComparator
+      implements Comparator<Map.Entry<AsyncLogger, NewEpochResponseProto>> {
+    private static final RecoveryComparator INSTANCE =
+        new RecoveryComparator();
+    
+    @Override
+    public int compare(
+        Entry<AsyncLogger, NewEpochResponseProto> a,
+        Entry<AsyncLogger, NewEpochResponseProto> b) {
+      
+      NewEpochResponseProto r1 = a.getValue();
+      NewEpochResponseProto r2 = b.getValue();
+      
+      return ComparisonChain.start()
+          .compare(r1.getCurrentEpoch(), r2.getCurrentEpoch())
+          .compare(r1.getLastSegment().getEndTxId(),
+                   r2.getLastSegment().getEndTxId())
+          .result();
+    }
+  }
+  
+
   long getWriterEpoch() {
-    Preconditions.checkState(myEpoch != INVALID_EPOCH,
-        "No epoch created yet");
-    return myEpoch;
+    return loggers.getEpoch();
   }
 
   protected List<AsyncLogger> createLoggers() throws IOException {
@@ -111,7 +152,7 @@ public class QuorumJournalManager implements JournalManager {
 
   @Override
   public EditLogOutputStream startLogSegment(long txId) throws IOException {
-    initEpoch();
+    Preconditions.checkState(isActiveWriter);
     QuorumCall<AsyncLogger,Void> q = loggers.startLogSegment(txId);
     loggers.waitForWriteQuorum(q, START_SEGMENT_TIMEOUT_MS);
     return new QuorumOutputStream(loggers);
@@ -139,8 +180,7 @@ public class QuorumJournalManager implements JournalManager {
 
   @Override
   public void recoverUnfinalizedSegments() throws IOException {
-    throw new UnsupportedOperationException();
-    
+    becomeActiveWriter();
   }
 
   @Override
@@ -152,7 +192,19 @@ public class QuorumJournalManager implements JournalManager {
   @Override
   public void selectInputStreams(Collection<EditLogInputStream> streams,
       long fromTxnId, boolean inProgressOk) {
-    // TODO Auto-generated method stub
+
+    QuorumCall<AsyncLogger,RemoteEditLogManifest> q =
+        loggers.getEditLogManifest(fromTxnId);
+    Map<AsyncLogger, RemoteEditLogManifest> resps;
+    try {
+      resps = loggers.waitForWriteQuorum(q, START_SEGMENT_TIMEOUT_MS);
+    } catch (IOException ioe) {
+      // TODO: can we do better here?
+      throw new RuntimeException(ioe);
+    }
+    
+    LOG.info("selectInputStream manifests:\n" +
+        Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
   }
   
   @Override

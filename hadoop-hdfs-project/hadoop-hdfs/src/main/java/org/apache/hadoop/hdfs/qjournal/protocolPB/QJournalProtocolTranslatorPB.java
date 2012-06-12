@@ -15,6 +15,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalRe
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.protocol.JournalProtocol;
 import org.apache.hadoop.ipc.ProtobufHelper;
@@ -118,6 +119,15 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
         .build();
     try {
       rpcProxy.finalizeLogSegment(NULL_CONTROLLER, req);
+    } catch (ServiceException e) {
+      throw ProtobufHelper.getRemoteException(e);
+    }
+  }
+
+  @Override
+  public void syncLogs(SyncLogsRequestProto req) throws IOException {
+    try {
+      rpcProxy.syncLogs(NULL_CONTROLLER, req);
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
     }

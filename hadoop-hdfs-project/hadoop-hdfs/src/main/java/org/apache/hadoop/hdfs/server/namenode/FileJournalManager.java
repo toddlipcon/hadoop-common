@@ -148,7 +148,7 @@ public class FileJournalManager implements JournalManager {
    * @return a list of remote edit logs
    * @throws IOException if edit logs cannot be listed.
    */
-  List<RemoteEditLog> getRemoteEditLogs(long firstTxId) throws IOException {
+  public List<RemoteEditLog> getRemoteEditLogs(long firstTxId) throws IOException {
     File currentDir = sd.getCurrentDir();
     List<EditLogFile> allLogFiles = matchEditLogs(currentDir);
     List<RemoteEditLog> ret = Lists.newArrayListWithCapacity(

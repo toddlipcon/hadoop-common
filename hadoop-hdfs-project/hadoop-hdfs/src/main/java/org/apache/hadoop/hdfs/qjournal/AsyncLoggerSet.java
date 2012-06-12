@@ -26,7 +26,10 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 
+import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -43,6 +46,9 @@ class AsyncLoggerSet {
   
   private final List<AsyncLogger> loggers;
   
+  private static final long INVALID_EPOCH = -1;
+  private long myEpoch = INVALID_EPOCH;
+  
   public AsyncLoggerSet(List<AsyncLogger> loggers) {
     this.loggers = ImmutableList.copyOf(loggers);
   }
@@ -53,7 +59,11 @@ class AsyncLoggerSet {
    * @return the epoch number
    * @throws IOException
    */
-  long createNewUniqueEpoch() throws IOException {
+  Map<AsyncLogger, NewEpochResponseProto> createNewUniqueEpoch()
+      throws IOException {
+    Preconditions.checkState(myEpoch == -1,
+        "epoch already created: epoch=" + myEpoch);
+    
     Map<AsyncLogger, GetEpochInfoResponseProto> lastPromises =
       waitForWriteQuorum(getEpochInfo(), NEWEPOCH_TIMEOUT_MS);
     
@@ -64,10 +74,26 @@ class AsyncLoggerSet {
     assert maxPromised >= 0;
     
     long myEpoch = maxPromised + 1;
-    waitForWriteQuorum(newEpoch(myEpoch), NEWEPOCH_TIMEOUT_MS);
-    return myEpoch;
+    Map<AsyncLogger, NewEpochResponseProto> resps =
+        waitForWriteQuorum(newEpoch(myEpoch), NEWEPOCH_TIMEOUT_MS);
+    this.myEpoch = myEpoch;
+    setEpoch(myEpoch);
+    return resps;
   }
   
+
+  private void setEpoch(long e) {
+    for (AsyncLogger l : loggers) {
+      l.setEpoch(e);
+    }
+  }
+
+  public long getEpoch() {
+    Preconditions.checkState(myEpoch != INVALID_EPOCH,
+        "No epoch created yet");
+    return myEpoch;
+  }
+
 
   /**
    * Wait for a quorum of loggers to respond to the given call. If a quorum
@@ -149,6 +175,18 @@ class AsyncLoggerSet {
     return QuorumCall.create(calls);
   }
 
+  public QuorumCall<AsyncLogger, RemoteEditLogManifest>
+      getEditLogManifest(long fromTxnId) {
+    Map<AsyncLogger, ListenableFuture<RemoteEditLogManifest>> calls
+        = Maps.newHashMap();
+    for (AsyncLogger logger : loggers) {
+      ListenableFuture<RemoteEditLogManifest> future =
+          logger.getEditLogManifest(fromTxnId);
+      calls.put(logger, future);
+    }
+    return QuorumCall.create(calls);
+  }
+
   int getMajoritySize() {
     return loggers.size() / 2 + 1;
   }
@@ -161,9 +199,4 @@ class AsyncLoggerSet {
     return loggers.size();
   }
 
-  public void setEpoch(long e) {
-    for (AsyncLogger l : loggers) {
-      l.setEpoch(e);
-    }
-  }
 }

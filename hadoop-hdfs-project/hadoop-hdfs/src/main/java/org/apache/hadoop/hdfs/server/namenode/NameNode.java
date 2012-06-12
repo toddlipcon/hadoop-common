@@ -417,6 +417,11 @@ public class NameNode {
    * @param conf the configuration
    */
   protected void initialize(Configuration conf) throws IOException {
+    initializeNamesystem(conf);
+    startCommonServices(conf);
+  }
+
+  private void initializeNamesystem(Configuration conf) throws IOException {
     UserGroupInformation.setConfiguration(conf);
     loginAsNameNodeUser(conf);
 
@@ -431,8 +436,6 @@ public class NameNode {
       LOG.fatal(e.toString());
       throw e;
     }
-
-    startCommonServices(conf);
   }
   
   /**
@@ -588,9 +591,15 @@ public class NameNode {
     this.haContext = createHAContext();
     try {
       initializeGenericKeys(conf, nsId, namenodeId);
-      initialize(conf);
-      state.prepareToEnterState(haContext);
-      state.enterState(haContext);
+      initializeNamesystem(conf);
+      getNamesystem().writeLock();
+      try {
+        startCommonServices(conf);
+        state.prepareToEnterState(haContext);
+        state.enterState(haContext);
+      } finally {
+        getNamesystem().writeUnlock();
+      }
     } catch (IOException e) {
       this.stop();
       throw e;

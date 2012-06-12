@@ -99,8 +99,30 @@ message NewEpochRequestProto {
 
 message NewEpochResponseProto {
   required LogSegmentProto lastSegment = 1;
+  required uint64 currentEpoch = 2;
 }
 
+/**
+ * syncLogs()
+ */
+message SyncLogsRequestProto {
+  required RequestInfo reqInfo = 1;
+  required string fromHost = 2;
+}
+
+message SyncLogsResponseProto {
+}
+
+/**
+ * readLog()
+ */
+message ReadLogRequestProto {
+  required uint64 txid = 1;
+  required uint32 maxLength = 2;
+}
+
+message ReadLogResponseProto {
+}
 
 /**
  * Protocol used to journal edits to a remote node. Currently,
@@ -129,6 +151,11 @@ service QJournalProtocolService {
 
   rpc finalizeLogSegment(FinalizeLogSegmentRequestProto)
       returns (FinalizeLogSegmentResponseProto);
+
+
+  rpc syncLogs(SyncLogsRequestProto)
+      returns (SyncLogsResponseProto);
+
 /*
   rpc readLog(ReadLogRequestProto)
       returns (ReadLogResponseProto);

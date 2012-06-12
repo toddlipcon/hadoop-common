@@ -21,13 +21,21 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.DFSUtil;
+import org.apache.hadoop.hdfs.protocol.proto.JournalSyncProtocolProtos.JournalSyncProtocolService;
+import org.apache.hadoop.hdfs.protocolPB.JournalSyncProtocolPB;
+import org.apache.hadoop.hdfs.protocolPB.JournalSyncProtocolServerSideTranslatorPB;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.QJournalProtocolService;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolServerSideTranslatorPB;
+import org.apache.hadoop.hdfs.server.protocol.JournalInfo;
+import org.apache.hadoop.hdfs.server.protocol.JournalSyncProtocol;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RPC.Server;
@@ -35,7 +43,7 @@ import org.apache.hadoop.net.NetUtils;
 
 import com.google.protobuf.BlockingService;
 
-class JournalNodeRpcServer implements QJournalProtocol {
+class JournalNodeRpcServer implements QJournalProtocol, JournalSyncProtocol {
 
   static final String DFS_JOURNALNODE_RPC_ADDRESS_KEY = "dfs.journalnode.rpc-address";
   static final int DEFAULT_PORT = 8485;
@@ -55,11 +63,19 @@ class JournalNodeRpcServer implements QJournalProtocol {
         new QJournalProtocolServerSideTranslatorPB(this);
     BlockingService service = QJournalProtocolService
         .newReflectiveBlockingService(translator);
+    
+    JournalSyncProtocolServerSideTranslatorPB syncTranslator = 
+        new JournalSyncProtocolServerSideTranslatorPB(this);   
+    BlockingService syncService = 
+        JournalSyncProtocolService.newReflectiveBlockingService(syncTranslator);
+    
     this.server = RPC.getServer(
         QJournalProtocolPB.class,
         service, addr.getHostName(),
             addr.getPort(), HANDLER_COUNT, false, conf,
             null /*secretManager*/);
+    DFSUtil.addPBProtocol(conf, JournalSyncProtocolPB.class, syncService,
+      server);
   }
 
   void start() {
@@ -112,5 +128,16 @@ class JournalNodeRpcServer implements QJournalProtocol {
   public void finalizeLogSegment(RequestInfo reqInfo, long startTxId,
       long endTxId) throws IOException {
     jn.finalizeLogSegment(reqInfo, startTxId, endTxId);
+  }
+
+  @Override
+  public void syncLogs(SyncLogsRequestProto req) throws IOException {
+    jn.syncLogs(req);
+  }
+
+  @Override
+  public RemoteEditLogManifest getEditLogManifest(JournalInfo info,
+      long sinceTxId) throws IOException {
+    return jn.getEditLogManifest(info, sinceTxId);
   }
 }

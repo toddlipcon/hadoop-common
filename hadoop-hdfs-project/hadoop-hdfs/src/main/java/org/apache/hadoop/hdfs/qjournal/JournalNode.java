@@ -31,12 +31,14 @@ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.LogSegmentProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.common.Storage.StorageDirectory;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
-import org.apache.hadoop.hdfs.util.LongContainingFile;
+import org.apache.hadoop.hdfs.server.protocol.JournalInfo;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
@@ -73,8 +75,12 @@ public class JournalNode implements Tool, Configurable {
   // TODO: set me at startup
   private boolean curSegmentFinalized = false;
   
-  // f_p in ZAB terminology
-  private long lastPromisedEpoch = -1;
+  /** f_p in ZAB terminology */
+  private PersistentLong lastPromisedEpoch;
+  
+  /** f_a in ZAB terminology */
+  private PersistentLong lastAcceptedEpoch;
+
   
   public GetEpochInfoResponseProto getEpochInfo() throws IOException {
     return GetEpochInfoResponseProto.newBuilder()
@@ -83,11 +89,7 @@ public class JournalNode implements Tool, Configurable {
   }
   
   synchronized long getLastPromisedEpoch() throws IOException {
-    if (lastPromisedEpoch < 0) {
-      lastPromisedEpoch = LongContainingFile.read(
-          getPromisedEpochFile(), 0);
-    }
-    return lastPromisedEpoch;
+    return lastPromisedEpoch.get();
   }
 
   public synchronized NewEpochResponseProto newEpoch(long epoch)
@@ -96,8 +98,7 @@ public class JournalNode implements Tool, Configurable {
       throw new IOException("Proposed epoch " + epoch + " <= last promise " +
           getEpochInfo());
     }
-    LongContainingFile.write(getPromisedEpochFile(), epoch);
-    lastPromisedEpoch = epoch;
+    lastPromisedEpoch.set(epoch);
     if (curSegment != null) {
       curSegment.close();
       curSegment = null;
@@ -107,14 +108,10 @@ public class JournalNode implements Tool, Configurable {
           .setStartTxId(curSegmentTxId)
           .setEndTxId(nextTxId - 1)
           .setIsInProgress(!curSegmentFinalized))
+          .setCurrentEpoch(lastAcceptedEpoch.get())
       .build();
   }
 
-
-  private File getPromisedEpochFile() {
-    return new File(fjm.getStorageDirectory().getCurrentDir(),
-        "last-promised-epoch");
-  }
 
   public synchronized void journal(RequestInfo reqInfo, long firstTxnId,
       int numTxns, byte[] records) throws IOException {
@@ -135,7 +132,7 @@ public class JournalNode implements Tool, Configurable {
 
   private void checkRequest(RequestInfo reqInfo) throws IOException {
     // Invariant 25 from ZAB paper
-    if (reqInfo.getEpoch() < lastPromisedEpoch) {
+    if (reqInfo.getEpoch() < lastPromisedEpoch.get()) {
       throw new IOException("IPC's epoch " + reqInfo.getEpoch() +
           " is less than the last promised epoch " + lastPromisedEpoch);
     }
@@ -181,6 +178,21 @@ public class JournalNode implements Tool, Configurable {
       fjm.finalizeLogSegment(startTxId, endTxId);
     }
   }
+  
+
+  public void syncLogs(SyncLogsRequestProto req) {
+    
+    
+  }
+
+
+  public RemoteEditLogManifest getEditLogManifest(JournalInfo info,
+      long sinceTxId) throws IOException {
+    // TODO: check fencing info?
+    return new RemoteEditLogManifest(
+        fjm.getRemoteEditLogs(sinceTxId));
+  }
+
 
   @Override
   public void setConf(Configuration conf) {
@@ -211,6 +223,12 @@ public class JournalNode implements Tool, Configurable {
     sd.clearDirectory();
     
     this.fjm = new FileJournalManager(sd, new ErrorReporter());
+    this.lastPromisedEpoch = new PersistentLong(
+        new File(fjm.getStorageDirectory().getCurrentDir(),
+            "last-promised-epoch"), 0);
+    this.lastAcceptedEpoch = new PersistentLong(
+        new File(fjm.getStorageDirectory().getCurrentDir(),
+            "last-accepted-epoch"), 0);
   }
 
   /**
@@ -221,6 +239,7 @@ public class JournalNode implements Tool, Configurable {
         "must init() first");
     rpcServer = new JournalNodeRpcServer(conf, this);
     rpcServer.start();
+    
   }
 
   public boolean isStarted() {

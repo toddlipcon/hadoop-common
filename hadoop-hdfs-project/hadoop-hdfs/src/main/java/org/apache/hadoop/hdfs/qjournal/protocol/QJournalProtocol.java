@@ -23,6 +23,7 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.security.KerberosInfo;
 
 /**
@@ -68,4 +69,6 @@ public interface QJournalProtocol {
   
   public void finalizeLogSegment(RequestInfo reqInfo,
       long startTxId, long endTxId) throws IOException;
+  
+  public void syncLogs(SyncLogsRequestProto req) throws IOException;
 }

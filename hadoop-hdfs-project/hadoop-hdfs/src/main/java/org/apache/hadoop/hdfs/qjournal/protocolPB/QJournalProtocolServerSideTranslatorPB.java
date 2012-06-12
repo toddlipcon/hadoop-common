@@ -13,6 +13,8 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochR
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 
 import com.google.protobuf.RpcController;
@@ -93,6 +95,14 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
     }
     return FinalizeLogSegmentResponseProto.newBuilder().build();
   }
+
+  @Override
+  public SyncLogsResponseProto syncLogs(RpcController controller,
+      SyncLogsRequestProto request) throws ServiceException {
+    // TODO Auto-generated method stub
+    throw new RuntimeException();
+  }
+
 
 
   private RequestInfo convert(
