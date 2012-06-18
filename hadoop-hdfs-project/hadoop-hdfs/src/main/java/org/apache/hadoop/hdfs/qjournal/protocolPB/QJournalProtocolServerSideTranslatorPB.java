@@ -1,12 +1,16 @@
 package org.apache.hadoop.hdfs.qjournal.protocolPB;
 
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.FinalizeLogSegmentRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.FinalizeLogSegmentResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalIdProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochRequestProto;
@@ -40,17 +44,25 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
   public GetEpochInfoResponseProto getEpochInfo(RpcController controller,
       GetEpochInfoRequestProto request) throws ServiceException {
     try {
-      return impl.getEpochInfo();
+      return impl.getEpochInfo(
+          convert(request.getJid()));
     } catch (IOException ioe) {
       throw new ServiceException(ioe);
     }
+  }
+
+  private String convert(JournalIdProto jid) {
+    return jid.getIdentifier();
   }
 
   @Override
   public NewEpochResponseProto newEpoch(RpcController controller,
       NewEpochRequestProto request) throws ServiceException {
     try {
-      return impl.newEpoch(request.getEpoch());
+      return impl.newEpoch(
+          request.getJid().getIdentifier(),
+          PBHelper.convert(request.getNsInfo()),
+          request.getEpoch());
     } catch (IOException ioe) {
       throw new ServiceException(ioe);
     }
@@ -103,10 +115,25 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
     throw new RuntimeException();
   }
 
+  @Override
+  public GetEditLogManifestResponseProto getEditLogManifest(
+      RpcController controller, GetEditLogManifestRequestProto request)
+      throws ServiceException {
+    try {
+      return impl.getEditLogManifest(
+          request.getJid().getIdentifier(),
+          request.getSinceTxId());
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
+  }
 
 
   private RequestInfo convert(
-      QJournalProtocolProtos.RequestInfo reqInfo) {
-    return new RequestInfo(reqInfo.getEpoch(), reqInfo.getIpcSerialNumber());
+      QJournalProtocolProtos.RequestInfoProto reqInfo) {
+    return new RequestInfo(
+        reqInfo.getJournalId().getIdentifier(),
+        reqInfo.getEpoch(),
+        reqInfo.getIpcSerialNumber());
   }
 }

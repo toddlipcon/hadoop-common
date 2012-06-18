@@ -17,9 +17,10 @@
  */
 package org.apache.hadoop.hdfs.qjournal;
 
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
@@ -31,11 +32,12 @@ interface AsyncLogger {
 
   public ListenableFuture<GetEpochInfoResponseProto> getEpochInfo();
 
-  public ListenableFuture<NewEpochResponseProto> newEpoch(long epoch);
+  public ListenableFuture<NewEpochResponseProto> newEpoch(
+      NamespaceInfo nsInfo, long epoch);
 
   public ListenableFuture<Void> finalizeLogSegment(long startTxId, long endTxId);
 
-  public ListenableFuture<RemoteEditLogManifest> getEditLogManifest(
+  public ListenableFuture<GetEditLogManifestResponseProto> getEditLogManifest(
       long fromTxnId);
 
   public void setEpoch(long e);

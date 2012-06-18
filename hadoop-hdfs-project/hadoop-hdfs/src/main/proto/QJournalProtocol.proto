@@ -23,9 +23,14 @@ option java_generate_equals_and_hash = true;
 
 import "hdfs.proto";
 
-message RequestInfo {
-  required uint64 epoch = 1;
-  required uint64 ipcSerialNumber = 2;
+message JournalIdProto {
+  required string identifier = 1;
+}
+
+message RequestInfoProto {
+  required JournalIdProto journalId = 1;
+  required uint64 epoch = 2;
+  required uint64 ipcSerialNumber = 3;
 }
 
 message LogSegmentProto {
@@ -41,7 +46,7 @@ message LogSegmentProto {
  * records - bytes containing serialized journal records for this batch
  */
 message JournalRequestProto {
-  required RequestInfo reqInfo = 1;
+  required RequestInfoProto reqInfo = 1;
   required uint64 firstTxnId = 2;
   required uint32 numTxns = 3;
   required bytes records = 4;
@@ -54,7 +59,7 @@ message JournalResponseProto {
 }
 
 message StartLogSegmentRequestProto {
-  required RequestInfo reqInfo = 1;
+  required RequestInfoProto reqInfo = 1;
   required uint64 txid = 2; // Transaction ID
 }
 
@@ -69,7 +74,7 @@ message StartLogSegmentResponseProto {
  * txid - first txid in the new log
  */
 message FinalizeLogSegmentRequestProto {
-  required RequestInfo reqInfo = 1;
+  required RequestInfoProto reqInfo = 1;
   required uint64 startTxId = 2;
   required uint64 endTxId = 3;
 }
@@ -84,6 +89,7 @@ message FinalizeLogSegmentResponseProto {
  * getEpochInfo()
  */
 message GetEpochInfoRequestProto {
+  required JournalIdProto jid = 1;
 }
 
 message GetEpochInfoResponseProto {
@@ -94,19 +100,40 @@ message GetEpochInfoResponseProto {
  * newEpoch()
  */
 message NewEpochRequestProto {
-  required uint64 epoch = 1;
+  required JournalIdProto jid = 1;
+  required NamespaceInfoProto nsInfo = 2;
+  required uint64 epoch = 3;
 }
 
 message NewEpochResponseProto {
-  required LogSegmentProto lastSegment = 1;
+  optional LogSegmentProto lastSegment = 1;
   required uint64 currentEpoch = 2;
+}
+
+/**
+ * getEditLogManifest()
+ */
+message GetEditLogManifestRequestProto {
+  required JournalIdProto jid = 1;
+  required uint64 sinceTxId = 2;  // Transaction ID
+}
+
+/**
+ * manifest - Enumeration of editlogs from journal service 
+ *            for logs >= sinceTxId in the request
+ */
+message GetEditLogManifestResponseProto {
+  required RemoteEditLogManifestProto manifest = 1; 
+  // TODO: we should add nsinfo somewhere
+  // to verify that it matches up with our expectation
+  // required NamespaceInfoProto nsInfo = 2;
 }
 
 /**
  * syncLogs()
  */
 message SyncLogsRequestProto {
-  required RequestInfo reqInfo = 1;
+  required RequestInfoProto reqInfo = 1;
   required string fromHost = 2;
 }
 
@@ -152,6 +179,8 @@ service QJournalProtocolService {
   rpc finalizeLogSegment(FinalizeLogSegmentRequestProto)
       returns (FinalizeLogSegmentResponseProto);
 
+  rpc getEditLogManifest(GetEditLogManifestRequestProto)
+      returns (GetEditLogManifestResponseProto);
 
   rpc syncLogs(SyncLogsRequestProto)
       returns (SyncLogsResponseProto);

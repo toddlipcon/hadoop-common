@@ -9,8 +9,11 @@ import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.FinalizeLogSegmentRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalIdProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
@@ -18,6 +21,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogS
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.protocol.JournalProtocol;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.ipc.ProtobufHelper;
 import org.apache.hadoop.ipc.ProtocolMetaInterface;
 import org.apache.hadoop.ipc.RPC;
@@ -50,9 +54,11 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
 
 
   @Override
-  public GetEpochInfoResponseProto getEpochInfo() throws IOException {
+  public GetEpochInfoResponseProto getEpochInfo(String jid)
+      throws IOException {
     try {
       GetEpochInfoRequestProto req = GetEpochInfoRequestProto.newBuilder()
+          .setJid(convertJournalId(jid))
           .build();
       return rpcProxy.getEpochInfo(NULL_CONTROLLER, req);
     } catch (ServiceException e) {
@@ -60,10 +66,20 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
     }
   }
 
+  private JournalIdProto convertJournalId(String jid) {
+    return JournalIdProto.newBuilder()
+        .setIdentifier(jid)
+        .build();
+  }
+
   @Override
-  public NewEpochResponseProto newEpoch(long epoch) throws IOException {
+  public NewEpochResponseProto newEpoch(String jid,
+      NamespaceInfo nsInfo, long epoch)
+      throws IOException {
     try {
       NewEpochRequestProto req = NewEpochRequestProto.newBuilder()
+        .setJid(convertJournalId(jid))
+        .setNsInfo(PBHelper.convert(nsInfo))
         .setEpoch(epoch)
         .build();
       return rpcProxy.newEpoch(NULL_CONTROLLER, req);
@@ -88,8 +104,9 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
     }
   }
 
-  private QJournalProtocolProtos.RequestInfo convert(RequestInfo reqInfo) {
-    return QJournalProtocolProtos.RequestInfo.newBuilder()
+  private QJournalProtocolProtos.RequestInfoProto convert(RequestInfo reqInfo) {
+    return QJournalProtocolProtos.RequestInfoProto.newBuilder()
+      .setJournalId(convertJournalId(reqInfo.getJournalId()))
       .setEpoch(reqInfo.getEpoch())
       .setIpcSerialNumber(reqInfo.getIpcSerialNumber())
       .build();
@@ -133,6 +150,19 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
     }
   }
 
+  @Override
+  public GetEditLogManifestResponseProto getEditLogManifest(String jid,
+      long sinceTxId) throws IOException {
+    try {
+      return rpcProxy.getEditLogManifest(NULL_CONTROLLER,
+          GetEditLogManifestRequestProto.newBuilder()
+            .setJid(convertJournalId(jid))
+            .setSinceTxId(sinceTxId)
+            .build());
+    } catch (ServiceException e) {
+      throw ProtobufHelper.getRemoteException(e);
+    }
+  }
 
   public boolean isMethodSupported(String methodName) throws IOException {
     return RpcClientUtil.isMethodSupported(rpcProxy,

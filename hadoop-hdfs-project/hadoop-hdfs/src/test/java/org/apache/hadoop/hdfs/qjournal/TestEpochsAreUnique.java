@@ -26,6 +26,7 @@ import java.util.Random;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
@@ -38,6 +39,9 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 public class TestEpochsAreUnique {
   private static final Log LOG = LogFactory.getLog(TestEpochsAreUnique.class);
+  private static final String JID = "testEpochsAreUnique-jid";
+  private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
+      12345, "mycluster", "my-bp", 0L, 0);
   private Random r = new Random();
   
   @Test
@@ -51,8 +55,8 @@ public class TestEpochsAreUnique {
       // With no failures or contention, epochs should increase one-by-one
       for (int i = 0; i < 5; i++) {
         AsyncLoggerSet als = new AsyncLoggerSet(
-            QuorumJournalManager.createLoggers(conf));
-        als.createNewUniqueEpoch();
+            QuorumJournalManager.createLoggers(conf, JID));
+        als.createNewUniqueEpoch(FAKE_NSINFO);
         assertEquals(i + 1, als.getEpoch());
       }
       
@@ -61,11 +65,11 @@ public class TestEpochsAreUnique {
       // skipping some
       for (int i = 0; i < 20; i++) {
         AsyncLoggerSet als = new AsyncLoggerSet(
-            makeFaulty(QuorumJournalManager.createLoggers(conf)));
+            makeFaulty(QuorumJournalManager.createLoggers(conf, JID)));
         long newEpoch = -1;
         while (true) {
           try {
-            als.createNewUniqueEpoch();
+            als.createNewUniqueEpoch(FAKE_NSINFO);
             newEpoch = als.getEpoch();
             break;
           } catch (IOException ioe) {
@@ -92,7 +96,8 @@ public class TestEpochsAreUnique {
       Mockito.doAnswer(new SometimesFaulty<Long>(0.10f))
           .when(spy).getEpochInfo();
       Mockito.doAnswer(new SometimesFaulty<Void>(0.40f))
-          .when(spy).newEpoch(Mockito.anyLong());
+          .when(spy).newEpoch(
+              (NamespaceInfo)Mockito.any(), Mockito.anyLong());
       ret.add(spy);
     }
     return ret;

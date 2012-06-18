@@ -23,17 +23,14 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.protocolPB.JournalSyncProtocolPB;
-import org.apache.hadoop.hdfs.protocolPB.JournalSyncProtocolTranslatorPB;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolTranslatorPB;
-import org.apache.hadoop.hdfs.server.protocol.JournalInfo;
-import org.apache.hadoop.hdfs.server.protocol.JournalSyncProtocol;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
 
@@ -56,15 +53,18 @@ class IPCLoggerChannel implements AsyncLogger {
   private final Configuration conf;
   private final InetSocketAddress addr;
   private QJournalProtocol proxy;
-  private JournalSyncProtocol syncProxy;
+  //private JournalSyncProtocol syncProxy; TODO
   
   private final ListeningExecutorService executor;
   private long ipcSerial = 0;
   private long epoch = -1;
+  private final String journalId;
   
-  public IPCLoggerChannel(Configuration conf, 
+  public IPCLoggerChannel(Configuration conf,
+      String journalId,
       InetSocketAddress addr) {
     this.conf = conf;
+    this.journalId = journalId;
     this.addr = addr;
     executor = MoreExecutors.listeningDecorator(
         Executors.newSingleThreadExecutor(
@@ -92,7 +92,8 @@ class IPCLoggerChannel implements AsyncLogger {
         addr, conf);
     return new QJournalProtocolTranslatorPB(pbproxy);
   }
-  
+
+  /* TODO killme
   private JournalSyncProtocol getSyncProxy() throws IOException {
     if (syncProxy != null) return syncProxy;
 
@@ -104,10 +105,11 @@ class IPCLoggerChannel implements AsyncLogger {
         addr, conf);
     return new JournalSyncProtocolTranslatorPB(pbproxy);
   }
-
+*/
+  
   private RequestInfo createReqInfo() {
     Preconditions.checkState(epoch > 0, "bad epoch: " + epoch);
-    return new RequestInfo(epoch, ipcSerial++);
+    return new RequestInfo(journalId, epoch, ipcSerial++);
   }
 
 
@@ -116,18 +118,19 @@ class IPCLoggerChannel implements AsyncLogger {
     return executor.submit(new Callable<GetEpochInfoResponseProto>() {
       @Override
       public GetEpochInfoResponseProto call() throws IOException {
-        return getProxy().getEpochInfo();
+        return getProxy().getEpochInfo(journalId);
       }
     });
   }
 
   @Override
   public ListenableFuture<NewEpochResponseProto> newEpoch(
+      final NamespaceInfo nsInfo,
       final long epoch) {
     return executor.submit(new Callable<NewEpochResponseProto>() {
       @Override
       public NewEpochResponseProto call() throws IOException {
-        return getProxy().newEpoch(epoch);
+        return getProxy().newEpoch(journalId, nsInfo, epoch);
       }
     });
   }
@@ -169,13 +172,13 @@ class IPCLoggerChannel implements AsyncLogger {
   }
   
   @Override
-  public ListenableFuture<RemoteEditLogManifest> getEditLogManifest(
+  public ListenableFuture<GetEditLogManifestResponseProto> getEditLogManifest(
       final long fromTxnId) {
-    return executor.submit(new Callable<RemoteEditLogManifest>() {
+    return executor.submit(new Callable<GetEditLogManifestResponseProto>() {
       @Override
-      public RemoteEditLogManifest call() throws IOException {
-        return getSyncProxy().getEditLogManifest(
-            new JournalInfo(0, "", 0), // TODO
+      public GetEditLogManifestResponseProto call() throws IOException {
+        return getProxy().getEditLogManifest(
+            journalId,
             fromTxnId);
       }
     });

@@ -25,6 +25,7 @@ import java.util.List;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 
 import com.google.common.base.Joiner;
@@ -35,6 +36,7 @@ public class MiniJournalCluster {
   public static class Builder {
     private String baseDir;
     private int numJournalNodes = 3;
+    private boolean format = true;
     private Configuration conf;
     
     public Builder(Configuration conf) {
@@ -50,7 +52,12 @@ public class MiniJournalCluster {
       this.numJournalNodes = n;
       return this;
     }
-    
+
+    public Builder format(boolean f) {
+      this.format = f;
+      return this;
+    }
+
     public MiniJournalCluster build() throws IOException {
       return new MiniJournalCluster(this);
     }
@@ -72,9 +79,14 @@ public class MiniJournalCluster {
     
     nodes = new JournalNode[b.numJournalNodes];
     for (int i = 0; i < b.numJournalNodes; i++) {
+      if (b.format) {
+        File dir = getStorageDir(i);
+        LOG.debug("Fully deleting JN directory " + dir);
+        FileUtil.fullyDelete(dir);
+      }
       nodes[i] = new JournalNode();
       nodes[i].setConf(createConfForNode(b, i));
-      nodes[i].init();
+      nodes[i].start();
     }
   }
 
@@ -136,8 +148,8 @@ public class MiniJournalCluster {
     return new File(baseDir, "journalnode-" + idx);
   }
   
-  public File getCurrentDir(int idx) {
-    return new File(getStorageDir(idx), "current");
+  public File getCurrentDir(int idx, String jid) {
+    return new File(new File(getStorageDir(idx), jid), "current");
   }
 
 

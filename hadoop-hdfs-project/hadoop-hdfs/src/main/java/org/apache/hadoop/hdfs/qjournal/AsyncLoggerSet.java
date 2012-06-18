@@ -24,11 +24,11 @@ import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
-import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
@@ -59,8 +59,8 @@ class AsyncLoggerSet {
    * @return the epoch number
    * @throws IOException
    */
-  Map<AsyncLogger, NewEpochResponseProto> createNewUniqueEpoch()
-      throws IOException {
+  Map<AsyncLogger, NewEpochResponseProto> createNewUniqueEpoch(
+      NamespaceInfo nsInfo) throws IOException {
     Preconditions.checkState(myEpoch == -1,
         "epoch already created: epoch=" + myEpoch);
     
@@ -75,7 +75,7 @@ class AsyncLoggerSet {
     
     long myEpoch = maxPromised + 1;
     Map<AsyncLogger, NewEpochResponseProto> resps =
-        waitForWriteQuorum(newEpoch(myEpoch), NEWEPOCH_TIMEOUT_MS);
+        waitForWriteQuorum(newEpoch(nsInfo, myEpoch), NEWEPOCH_TIMEOUT_MS);
     this.myEpoch = myEpoch;
     setEpoch(myEpoch);
     return resps;
@@ -137,11 +137,13 @@ class AsyncLoggerSet {
     return QuorumCall.create(calls);    
   }
 
-  private QuorumCall<AsyncLogger,NewEpochResponseProto> newEpoch(long epoch) {
+  private QuorumCall<AsyncLogger,NewEpochResponseProto> newEpoch(
+      NamespaceInfo nsInfo,
+      long epoch) {
     Map<AsyncLogger, ListenableFuture<NewEpochResponseProto>> calls =
         Maps.newHashMap();
     for (AsyncLogger logger : loggers) {
-      calls.put(logger, logger.newEpoch(epoch));
+      calls.put(logger, logger.newEpoch(nsInfo, epoch));
     }
     return QuorumCall.create(calls);    
   }
@@ -175,12 +177,13 @@ class AsyncLoggerSet {
     return QuorumCall.create(calls);
   }
 
-  public QuorumCall<AsyncLogger, RemoteEditLogManifest>
+  public QuorumCall<AsyncLogger,GetEditLogManifestResponseProto>
       getEditLogManifest(long fromTxnId) {
-    Map<AsyncLogger, ListenableFuture<RemoteEditLogManifest>> calls
+    Map<AsyncLogger,
+        ListenableFuture<GetEditLogManifestResponseProto>> calls
         = Maps.newHashMap();
     for (AsyncLogger logger : loggers) {
-      ListenableFuture<RemoteEditLogManifest> future =
+      ListenableFuture<GetEditLogManifestResponseProto> future =
           logger.getEditLogManifest(fromTxnId);
       calls.put(logger, future);
     }

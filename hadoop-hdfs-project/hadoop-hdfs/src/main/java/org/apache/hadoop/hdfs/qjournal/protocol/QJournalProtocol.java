@@ -21,9 +21,11 @@ import java.io.IOException;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.security.KerberosInfo;
 
 /**
@@ -38,9 +40,11 @@ import org.apache.hadoop.security.KerberosInfo;
 public interface QJournalProtocol {
   public static final long versionID = 1L;
 
-  public GetEpochInfoResponseProto getEpochInfo() throws IOException;
-  public NewEpochResponseProto newEpoch(long epoch)
-    throws IOException;
+  public GetEpochInfoResponseProto getEpochInfo(String journalId)
+      throws IOException;
+  public NewEpochResponseProto newEpoch(String journalId,
+      NamespaceInfo nsInfo,
+      long epoch) throws IOException;
   
   /**
    * Journal edit records.
@@ -71,4 +75,7 @@ public interface QJournalProtocol {
       long startTxId, long endTxId) throws IOException;
   
   public void syncLogs(SyncLogsRequestProto req) throws IOException;
+  
+  GetEditLogManifestResponseProto getEditLogManifest(
+      String jid, long sinceTxId) throws IOException;
 }

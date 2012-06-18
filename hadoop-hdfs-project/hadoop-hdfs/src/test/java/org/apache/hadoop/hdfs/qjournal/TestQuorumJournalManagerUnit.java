@@ -27,9 +27,11 @@ import java.util.List;
 import org.apache.commons.logging.impl.Log4JLogger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.log4j.Level;
 import org.junit.Before;
@@ -60,7 +62,7 @@ public class TestQuorumJournalManagerUnit {
         mockLogger(),
         mockLogger());
 
-    qjm = new QuorumJournalManager(conf, new URI("qjournal:///")) {
+    qjm = new QuorumJournalManager(conf, new URI("qjournal://host/jid")) {
       @Override
       protected List<AsyncLogger> createLoggers() {
         return spyLoggers;
@@ -73,8 +75,16 @@ public class TestQuorumJournalManagerUnit {
           .build())
         .when(logger).getEpochInfo();
       
-      futureReturns(null).when(logger).newEpoch(Mockito.anyLong());
+      futureReturns(
+          NewEpochResponseProto.newBuilder()
+            .setCurrentEpoch(0)
+            .build()
+          ).when(logger).newEpoch(
+          Mockito.<NamespaceInfo>any(),
+          Mockito.anyLong());
     }
+    
+    qjm.recoverUnfinalizedSegments();
   }
   
   private AsyncLogger mockLogger() {

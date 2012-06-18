@@ -21,11 +21,8 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.DFSUtil;
-import org.apache.hadoop.hdfs.protocol.proto.JournalSyncProtocolProtos.JournalSyncProtocolService;
-import org.apache.hadoop.hdfs.protocolPB.JournalSyncProtocolPB;
-import org.apache.hadoop.hdfs.protocolPB.JournalSyncProtocolServerSideTranslatorPB;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.QJournalProtocolService;
@@ -33,9 +30,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsR
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolServerSideTranslatorPB;
-import org.apache.hadoop.hdfs.server.protocol.JournalInfo;
-import org.apache.hadoop.hdfs.server.protocol.JournalSyncProtocol;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RPC.Server;
@@ -43,7 +38,7 @@ import org.apache.hadoop.net.NetUtils;
 
 import com.google.protobuf.BlockingService;
 
-class JournalNodeRpcServer implements QJournalProtocol, JournalSyncProtocol {
+class JournalNodeRpcServer implements QJournalProtocol {
 
   static final String DFS_JOURNALNODE_RPC_ADDRESS_KEY = "dfs.journalnode.rpc-address";
   static final int DEFAULT_PORT = 8485;
@@ -64,18 +59,11 @@ class JournalNodeRpcServer implements QJournalProtocol, JournalSyncProtocol {
     BlockingService service = QJournalProtocolService
         .newReflectiveBlockingService(translator);
     
-    JournalSyncProtocolServerSideTranslatorPB syncTranslator = 
-        new JournalSyncProtocolServerSideTranslatorPB(this);   
-    BlockingService syncService = 
-        JournalSyncProtocolService.newReflectiveBlockingService(syncTranslator);
-    
     this.server = RPC.getServer(
         QJournalProtocolPB.class,
         service, addr.getHostName(),
             addr.getPort(), HANDLER_COUNT, false, conf,
             null /*secretManager*/);
-    DFSUtil.addPBProtocol(conf, JournalSyncProtocolPB.class, syncService,
-      server);
   }
 
   void start() {
@@ -102,42 +90,49 @@ class JournalNodeRpcServer implements QJournalProtocol, JournalSyncProtocol {
   }
 
   @Override
-  public GetEpochInfoResponseProto getEpochInfo() throws IOException {
-    return jn.getEpochInfo();
+  public GetEpochInfoResponseProto getEpochInfo(String journalId)
+        throws IOException {
+    return jn.getOrCreateJournal(journalId).getEpochInfo();
   }
 
   @Override
-  public NewEpochResponseProto newEpoch(long epoch) throws IOException {
-    return jn.newEpoch(epoch);
+  public NewEpochResponseProto newEpoch(String journalId,
+      NamespaceInfo nsInfo,
+      long epoch) throws IOException {
+    return jn.getOrCreateJournal(journalId).newEpoch(nsInfo, epoch);
   }
 
 
   @Override
   public void journal(RequestInfo reqInfo, long firstTxnId,
       int numTxns, byte[] records) throws IOException {
-    jn.journal(reqInfo, firstTxnId, numTxns, records);
+    jn.getOrCreateJournal(reqInfo.getJournalId())
+       .journal(reqInfo, firstTxnId, numTxns, records);
   }
 
   @Override
   public void startLogSegment(RequestInfo reqInfo, long txid)
       throws IOException {
-    jn.startLogSegment(reqInfo, txid);
+    jn.getOrCreateJournal(reqInfo.getJournalId())
+      .startLogSegment(reqInfo, txid);
   }
 
   @Override
   public void finalizeLogSegment(RequestInfo reqInfo, long startTxId,
       long endTxId) throws IOException {
-    jn.finalizeLogSegment(reqInfo, startTxId, endTxId);
+    jn.getOrCreateJournal(reqInfo.getJournalId())
+      .finalizeLogSegment(reqInfo, startTxId, endTxId);
   }
 
   @Override
   public void syncLogs(SyncLogsRequestProto req) throws IOException {
-    jn.syncLogs(req);
+    // TODO
   }
 
   @Override
-  public RemoteEditLogManifest getEditLogManifest(JournalInfo info,
+  public GetEditLogManifestResponseProto getEditLogManifest(String jid,
       long sinceTxId) throws IOException {
-    return jn.getEditLogManifest(info, sinceTxId);
+    return jn.getOrCreateJournal(jid)
+        .getEditLogManifest(sinceTxId);
   }
 }

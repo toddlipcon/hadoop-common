@@ -31,11 +31,12 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.JournalManager;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.net.NetUtils;
 
 import com.google.common.base.Joiner;
@@ -59,26 +60,47 @@ public class QuorumJournalManager implements JournalManager {
 
   private final Configuration conf;
   private final URI uri;
+  private final NamespaceInfo nsInfo;
+  private String journalId;
   private boolean isActiveWriter;
   
-  private AsyncLoggerSet loggers;
+  private final AsyncLoggerSet loggers;
+
+  
 
   
   public QuorumJournalManager(Configuration conf,
-      URI uri) {
+      URI uri) throws IOException {
+    Preconditions.checkArgument(conf != null, "must be configured");
+
     this.conf = conf;
     this.uri = uri;
+    String path = uri.getPath();
+    Preconditions.checkArgument(path != null && !path.isEmpty(),
+        "Bad URI '%s': must identify journal in path component",
+        uri);
+    this.journalId = path.substring(1);
+    checkJournalId(journalId);
+    
+    // TODO: need to plumb namespace info in here from NN/Storage
+    this.nsInfo = new NamespaceInfo(12345, "fake-cluster", "fake-bp", 1L, 1);
+    
+    this.loggers = new AsyncLoggerSet(createLoggers());
   }
   
+  static void checkJournalId(String jid) {
+    Preconditions.checkArgument(jid != null &&
+        !jid.isEmpty() &&
+        !jid.contains("/") &&
+        !jid.startsWith("."),
+        "bad journal id: " + jid);
+  }
+
   private synchronized void becomeActiveWriter() throws IOException {
     Preconditions.checkState(!isActiveWriter, "already active writer");
-    Preconditions.checkState(conf != null, "must be configured");
 
-    assert loggers == null;
-    this.loggers = new AsyncLoggerSet(createLoggers());
-    
     Map<AsyncLogger, NewEpochResponseProto> resps =
-        loggers.createNewUniqueEpoch();
+        loggers.createNewUniqueEpoch(nsInfo);
     LOG.info("newEpoch(" + getWriterEpoch() + ") responses:\n" +
         Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
 
@@ -123,15 +145,15 @@ public class QuorumJournalManager implements JournalManager {
   }
 
   protected List<AsyncLogger> createLoggers() throws IOException {
-    return createLoggers(conf);
+    return createLoggers(conf, journalId);
   }
   
-  static List<AsyncLogger> createLoggers(Configuration conf)
-      throws IOException {
+  static List<AsyncLogger> createLoggers(Configuration conf,
+      String journalId) throws IOException {
     List<AsyncLogger> ret = Lists.newArrayList();
     List<InetSocketAddress> addrs = getLoggerAddresses(conf);
     for (InetSocketAddress addr : addrs) {
-      ret.add(new IPCLoggerChannel(conf, addr));
+      ret.add(new IPCLoggerChannel(conf, journalId, addr));
     }
     return ret;
   }
@@ -152,7 +174,8 @@ public class QuorumJournalManager implements JournalManager {
 
   @Override
   public EditLogOutputStream startLogSegment(long txId) throws IOException {
-    Preconditions.checkState(isActiveWriter);
+    Preconditions.checkState(isActiveWriter,
+        "must recover segments before starting a new one");
     QuorumCall<AsyncLogger,Void> q = loggers.startLogSegment(txId);
     loggers.waitForWriteQuorum(q, START_SEGMENT_TIMEOUT_MS);
     return new QuorumOutputStream(loggers);
@@ -193,9 +216,9 @@ public class QuorumJournalManager implements JournalManager {
   public void selectInputStreams(Collection<EditLogInputStream> streams,
       long fromTxnId, boolean inProgressOk) {
 
-    QuorumCall<AsyncLogger,RemoteEditLogManifest> q =
+    QuorumCall<AsyncLogger,GetEditLogManifestResponseProto> q =
         loggers.getEditLogManifest(fromTxnId);
-    Map<AsyncLogger, RemoteEditLogManifest> resps;
+    Map<AsyncLogger, GetEditLogManifestResponseProto> resps;
     try {
       resps = loggers.waitForWriteQuorum(q, START_SEGMENT_TIMEOUT_MS);
     } catch (IOException ioe) {

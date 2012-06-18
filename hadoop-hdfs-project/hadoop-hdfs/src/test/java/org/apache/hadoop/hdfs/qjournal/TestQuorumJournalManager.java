@@ -32,15 +32,19 @@ import org.junit.Test;
  * For true unit tests, see {@link TestQuorumJournalManagerUnit}.
  */
 public class TestQuorumJournalManager {
+  private static final String JID = "testQuorumJournalManager";
+
   @Test
   public void testSingleWriter() throws Exception {
     Configuration conf = new Configuration();
-    MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf).build();
+    MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf)
+      .build();
     cluster.start();
     try {
       cluster.setupClientConfigs(conf);
       QuorumJournalManager qjm = new QuorumJournalManager(conf,
-          new URI("qjournal://"));
+          new URI("qjournal://x/" + JID));
+      qjm.recoverUnfinalizedSegments();
       EditLogOutputStream stm = qjm.startLogSegment(1);
       // Should create in-progress
       assertExistsInQuorum(cluster,
@@ -79,7 +83,8 @@ public class TestQuorumJournalManager {
       String fname) {
     int count = 0;
     for (int i = 0; i < 3; i++) {
-      if (new File(cluster.getCurrentDir(i), fname).exists()) {
+      File dir = cluster.getCurrentDir(i, JID);
+      if (new File(dir, fname).exists()) {
         count++;
       }
     }
