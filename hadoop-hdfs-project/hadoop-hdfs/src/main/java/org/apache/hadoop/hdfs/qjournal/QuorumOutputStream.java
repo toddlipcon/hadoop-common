@@ -76,10 +76,10 @@ class QuorumOutputStream extends EditLogOutputStream {
   @Override
   protected void flushAndSync() throws IOException {
     int numReadyBytes = buf.countReadyBytes();
-    int numReadyTxns = buf.countReadyTxns();
-    long firstTxToFlush = buf.getFirstReadyTxId();
-    
     if (numReadyBytes > 0) {
+      int numReadyTxns = buf.countReadyTxns();
+      long firstTxToFlush = buf.getFirstReadyTxId();
+
       assert numReadyTxns > 0;
 
       // Copy from our double-buffer into a new byte array. This is for
