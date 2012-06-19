@@ -25,7 +25,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLo
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.security.KerberosInfo;
 
@@ -75,7 +75,7 @@ public interface QJournalProtocol {
   public void finalizeLogSegment(RequestInfo reqInfo,
       long startTxId, long endTxId) throws IOException;
   
-  public void syncLogs(SyncLogsRequestProto req) throws IOException;
+  public void syncLog(SyncLogRequestProto req) throws IOException;
   
   GetEditLogManifestResponseProto getEditLogManifest(
       String jid, long sinceTxId) throws IOException;

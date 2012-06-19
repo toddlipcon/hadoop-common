@@ -14,7 +14,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochI
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.LogSegmentProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
@@ -190,7 +190,7 @@ public class Journal implements Closeable {
   }
   
 
-  public void syncLogs(SyncLogsRequestProto req) {
+  public void syncLog(SyncLogRequestProto req) {
     
     
   }

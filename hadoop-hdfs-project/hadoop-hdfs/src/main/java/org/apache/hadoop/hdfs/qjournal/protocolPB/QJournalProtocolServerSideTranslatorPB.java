@@ -21,8 +21,8 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrep
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 
 import com.google.protobuf.RpcController;
@@ -113,8 +113,8 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
   }
 
   @Override
-  public SyncLogsResponseProto syncLogs(RpcController controller,
-      SyncLogsRequestProto request) throws ServiceException {
+  public SyncLogResponseProto syncLog(RpcController controller,
+      SyncLogRequestProto request) throws ServiceException {
     // TODO Auto-generated method stub
     throw new RuntimeException();
   }

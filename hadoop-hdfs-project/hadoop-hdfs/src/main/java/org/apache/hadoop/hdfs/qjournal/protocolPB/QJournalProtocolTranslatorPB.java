@@ -21,7 +21,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosAcce
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.protocol.JournalProtocol;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
@@ -146,9 +146,9 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
   }
 
   @Override
-  public void syncLogs(SyncLogsRequestProto req) throws IOException {
+  public void syncLog(SyncLogRequestProto req) throws IOException {
     try {
-      rpcProxy.syncLogs(NULL_CONTROLLER, req);
+      rpcProxy.syncLog(NULL_CONTROLLER, req);
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
     }

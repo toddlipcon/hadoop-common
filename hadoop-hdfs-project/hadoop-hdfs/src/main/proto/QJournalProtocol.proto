@@ -132,14 +132,15 @@ message GetEditLogManifestResponseProto {
 }
 
 /**
- * syncLogs()
+ * syncLog()
  */
-message SyncLogsRequestProto {
+message SyncLogRequestProto {
   required RequestInfoProto reqInfo = 1;
-  required string fromHost = 2;
+  required uint64 segmentStartTxId = 2;
+  required string fromURL= 3;
 }
 
-message SyncLogsResponseProto {
+message SyncLogResponseProto {
 }
 
 /**
@@ -215,8 +216,8 @@ service QJournalProtocolService {
   rpc paxosAccept(PaxosAcceptRequestProto)
       returns (PaxosAcceptResponseProto);
 
-  rpc syncLogs(SyncLogsRequestProto)
-      returns (SyncLogsResponseProto);
+  rpc syncLog(SyncLogRequestProto)
+      returns (SyncLogResponseProto);
 
 /*
   rpc readLog(ReadLogRequestProto)
