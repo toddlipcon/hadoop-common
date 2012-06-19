@@ -141,6 +141,7 @@ public class MiniJournalCluster {
     File logDir = getStorageDir(idx);
     conf.set(JournalNode.DFS_JOURNALNODE_DIR_KEY, logDir.toString());
     conf.set(JournalNodeRpcServer.DFS_JOURNALNODE_RPC_ADDRESS_KEY, "0.0.0.0:0");
+    conf.set(JournalNodeHttpServer.DFS_JOURNALNODE_HTTP_ADDRESS_KEY, "0.0.0.0:0");
     return conf;
   }
 

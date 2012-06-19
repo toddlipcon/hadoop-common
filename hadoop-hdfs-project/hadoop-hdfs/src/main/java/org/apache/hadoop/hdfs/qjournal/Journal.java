@@ -180,14 +180,12 @@ public class Journal implements Closeable {
   }
 
 
-  public GetEditLogManifestResponseProto getEditLogManifest(long sinceTxId)
+  public RemoteEditLogManifest getEditLogManifest(long sinceTxId)
       throws IOException {
     // TODO: check fencing info?
     RemoteEditLogManifest manifest = new RemoteEditLogManifest(
         fjm.getRemoteEditLogs(sinceTxId));
-    return GetEditLogManifestResponseProto.newBuilder()
-        .setManifest(PBHelper.convert(manifest))
-        .build();
+    return manifest;
   }
 
 }

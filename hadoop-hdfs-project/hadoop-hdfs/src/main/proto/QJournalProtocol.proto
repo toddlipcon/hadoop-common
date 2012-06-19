@@ -124,6 +124,8 @@ message GetEditLogManifestRequestProto {
  */
 message GetEditLogManifestResponseProto {
   required RemoteEditLogManifestProto manifest = 1; 
+  required uint32 httpPort = 2;
+
   // TODO: we should add nsinfo somewhere
   // to verify that it matches up with our expectation
   // required NamespaceInfoProto nsInfo = 2;

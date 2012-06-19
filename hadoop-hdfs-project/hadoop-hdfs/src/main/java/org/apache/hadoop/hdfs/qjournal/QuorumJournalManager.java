@@ -228,6 +228,7 @@ public class QuorumJournalManager implements JournalManager {
     
     LOG.info("selectInputStream manifests:\n" +
         Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
+    
   }
   
   @Override
