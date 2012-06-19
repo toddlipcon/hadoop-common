@@ -27,9 +27,12 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.server.common.Storage.StorageDirectory;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
+import org.apache.hadoop.metrics2.source.JvmMetrics;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
@@ -53,8 +56,8 @@ public class JournalNode implements Tool, Configurable {
   
   private Configuration conf;
   private JournalNodeRpcServer rpcServer;
+  private JournalNodeHttpServer httpServer;
   private Map<String, Journal> journalsById = Maps.newHashMap();
-  
   
   
   /**
@@ -97,6 +100,14 @@ public class JournalNode implements Tool, Configurable {
    * Start listening for edits via RPC.
    */
   void start() throws IOException {
+    DefaultMetricsSystem.initialize("JournalNode");
+    JvmMetrics.create("JournalNode",
+        conf.get(DFSConfigKeys.DFS_METRICS_SESSION_ID_KEY),
+        DefaultMetricsSystem.instance());
+    
+    httpServer = new JournalNodeHttpServer(conf, this);
+    httpServer.start();
+
     rpcServer = new JournalNodeRpcServer(conf, this);
     rpcServer.start();
   }
@@ -108,9 +119,15 @@ public class JournalNode implements Tool, Configurable {
   /**
    * @return the address the IPC server is bound to
    */
-  public InetSocketAddress getBoundAddress() {
+  public InetSocketAddress getBoundIpcAddress() {
     return rpcServer.getAddress();
   }
+  
+
+  public InetSocketAddress getBoundHttpAddress() {
+    return httpServer.getAddress();
+  }
+
 
   /**
    * Stop the daemon with the given status code
@@ -119,6 +136,15 @@ public class JournalNode implements Tool, Configurable {
    */
   public void stop(int rc) {
     this.resultCode = rc;
+    
+    if (httpServer != null) {
+      try {
+        httpServer.stop();
+      } catch (IOException ioe) {
+        LOG.warn("Unable to stop HTTP server for " + this, ioe);
+      }
+    }
+    
     if (rpcServer != null) { 
       rpcServer.stop();
     }
@@ -161,5 +187,6 @@ public class JournalNode implements Tool, Configurable {
   public static void main(String[] args) throws Exception {
     System.exit(ToolRunner.run(new JournalNode(), args));
   }
+
 
 }

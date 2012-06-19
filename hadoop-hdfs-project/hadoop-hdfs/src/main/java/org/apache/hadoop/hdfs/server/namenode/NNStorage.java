@@ -756,20 +756,6 @@ public class NNStorage extends Storage implements Closeable, StorageErrorReporte
   }
 
   /**
-   * @return A list of the given File in every available storage directory,
-   * regardless of whether it might exist.
-   */
-  List<File> getFiles(NameNodeDirType dirType, String fileName) {
-    ArrayList<File> list = new ArrayList<File>();
-    Iterator<StorageDirectory> it =
-      (dirType == null) ? dirIterator() : dirIterator(dirType);
-    for ( ;it.hasNext(); ) {
-      list.add(new File(it.next().getCurrentDir(), fileName));
-    }
-    return list;
-  }
-
-  /**
    * Set the upgrade manager for use in a distributed upgrade.
    * @param um The upgrade manager
    */
@@ -928,7 +914,7 @@ public class NNStorage extends Storage implements Closeable, StorageErrorReporte
    * Report that an IOE has occurred on some file which may
    * or may not be within one of the NN image storage directories.
    */
-  void reportErrorOnFile(File f) {
+  public void reportErrorOnFile(File f) {
     // We use getAbsolutePath here instead of getCanonicalPath since we know
     // that there is some IO problem on that drive.
     // getCanonicalPath may need to call stat() or readlink() and it's likely

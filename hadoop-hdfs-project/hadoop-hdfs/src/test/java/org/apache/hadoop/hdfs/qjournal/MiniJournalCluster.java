@@ -98,7 +98,7 @@ public class MiniJournalCluster {
     List<String> addrs = Lists.newArrayList();
     for (JournalNode jn : nodes) {
       Preconditions.checkState(jn.isStarted(), "Cluster not yet started");
-      InetSocketAddress addr = jn.getBoundAddress();
+      InetSocketAddress addr = jn.getBoundIpcAddress();
       assert addr.getPort() != 0;
       addrs.add("127.0.0.1:" + addr.getPort());
     }

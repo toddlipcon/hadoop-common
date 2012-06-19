@@ -33,6 +33,7 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.server.common.Util;
+import org.apache.hadoop.hdfs.server.common.Storage;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage.NameNodeDirType;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.hdfs.util.DataTransferThrottler;
@@ -60,7 +61,7 @@ public class TransferFsImage {
   }
 
   public static MD5Hash downloadImageToStorage(
-      String fsName, long imageTxId, NNStorage dstStorage, boolean needDigest)
+      String fsName, long imageTxId, Storage dstStorage, boolean needDigest)
       throws IOException {
     String fileid = GetImageServlet.getParamStringForImage(
         imageTxId, dstStorage);
@@ -116,7 +117,7 @@ public class TransferFsImage {
    */
   public static void uploadImageFromStorage(String fsName,
       InetSocketAddress imageListenAddress,
-      NNStorage storage, long txid) throws IOException {
+      Storage storage, long txid) throws IOException {
     
     String fileid = GetImageServlet.getParamStringToPutImage(
         txid, imageListenAddress, storage);
@@ -199,7 +200,7 @@ public class TransferFsImage {
    */
   static MD5Hash getFileClient(String nnHostPort,
       String queryString, List<File> localPaths,
-      NNStorage dstStorage, boolean getChecksum) throws IOException {
+      Storage dstStorage, boolean getChecksum) throws IOException {
     byte[] buf = new byte[HdfsConstants.IO_FILE_BUFFER_SIZE];
 
     String str = "http://" + nnHostPort + "/getimage?" + queryString;

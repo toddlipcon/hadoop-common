@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.hdfs.server.journalservice;
+package org.apache.hadoop.hdfs.qjournal;
 
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_ADMIN;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_JOURNAL_KEYTAB_FILE_KEY;
@@ -31,12 +31,9 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.qjournal.GetJournalEditServlet;
 import org.apache.hadoop.hdfs.server.common.JspHelper;
-import org.apache.hadoop.hdfs.server.namenode.TransferFsImage;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.http.HttpServer;
+import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.authorize.AccessControlList;
@@ -45,36 +42,40 @@ import org.apache.hadoop.security.authorize.AccessControlList;
  * Encapsulates the HTTP server started by the Journal Service.
  */
 @InterfaceAudience.Private
-public class JournalHttpServer {
-  public static final Log LOG = LogFactory.getLog(JournalHttpServer.class);
+public class JournalNodeHttpServer {
+  // TODO: move to DFSConfigKeys
+  static final String DFS_JOURNALNODE_HTTP_ADDRESS_KEY = "dfs.journalnode.http-address";
+  static final int DEFAULT_PORT = 8480;
+  private static final String DFS_JOURNALNODE_HTTP_ADDRESS_DEFAULT =
+      "0.0.0.0:" + DEFAULT_PORT;
 
-  public static final String JOURNAL_ATTRIBUTE_KEY = "localjournal";
+
+  public static final Log LOG = LogFactory.getLog(
+      JournalNodeHttpServer.class);
+
+  public static final String JN_ATTRIBUTE_KEY = "localjournal";
 
   private HttpServer httpServer;
-  private InetSocketAddress httpAddress;
-  private String infoBindAddress;
   private int infoPort;
   private int httpsPort;
-  private Journal localJournal;
+  private JournalNode localJournalNode;
 
   private final Configuration conf;
 
-  JournalHttpServer(Configuration conf, Journal journal,
-      InetSocketAddress bindAddress) {
+  JournalNodeHttpServer(Configuration conf, JournalNode jn) {
     this.conf = conf;
-    this.localJournal = journal;
-    this.httpAddress = bindAddress;
+    this.localJournalNode = jn;
   }
 
   void start() throws IOException {
-    infoBindAddress = httpAddress.getHostName();
+    final InetSocketAddress bindAddr = getAddress(conf);
 
     // initialize the webserver for uploading/downloading files.
     // Kerberized SSL servers must be run from the host principal...
     UserGroupInformation httpUGI = UserGroupInformation
         .loginUserFromKeytabAndReturnUGI(SecurityUtil.getServerPrincipal(
             conf.get(DFS_JOURNAL_KRB_HTTPS_USER_NAME_KEY),
-            infoBindAddress), conf.get(DFS_JOURNAL_KEYTAB_FILE_KEY));
+            bindAddr.getHostName()), conf.get(DFS_JOURNAL_KEYTAB_FILE_KEY));
     try {
       httpServer = httpUGI.doAs(new PrivilegedExceptionAction<HttpServer>() {
         @Override
@@ -82,15 +83,15 @@ public class JournalHttpServer {
           LOG.info("Starting web server as: "
               + UserGroupInformation.getCurrentUser().getUserName());
 
-          int tmpInfoPort = httpAddress.getPort();
-          httpServer = new HttpServer("journal", infoBindAddress,
+          int tmpInfoPort = bindAddr.getPort();
+          httpServer = new HttpServer("journal", bindAddr.getHostName(),
               tmpInfoPort, tmpInfoPort == 0, conf, new AccessControlList(conf
                   .get(DFS_ADMIN, " ")));
 
           if (UserGroupInformation.isSecurityEnabled()) {
             // TODO: implementation 
           }
-          httpServer.setAttribute(JOURNAL_ATTRIBUTE_KEY, localJournal);
+          httpServer.setAttribute(JN_ATTRIBUTE_KEY, localJournalNode);
           httpServer.setAttribute(JspHelper.CURRENT_CONF, conf);
           // use "/getimage" because GetJournalEditServlet uses some
           // GetImageServlet methods.
@@ -111,7 +112,7 @@ public class JournalHttpServer {
       httpsPort = infoPort;
     }
 
-    LOG.info("Journal Web-server up at: " + infoBindAddress + ":" + infoPort
+    LOG.info("Journal Web-server up at: " + bindAddr + ":" + infoPort
         + " and https port is: " + httpsPort);
   }
 
@@ -124,50 +125,28 @@ public class JournalHttpServer {
       }
     }
   }
-
-  InetSocketAddress getHttpAddress() {
-    return httpAddress;
-  }
   
+  /**
+   * Return the actual address bound to by the running server.
+   */
+  public InetSocketAddress getAddress() {
+    InetSocketAddress addr = httpServer.getListenerAddress();
+    assert addr.getPort() != 0;
+    return addr;
+  }
+
+  private static InetSocketAddress getAddress(Configuration conf) {
+    String addr = conf.get(DFS_JOURNALNODE_HTTP_ADDRESS_KEY,
+        DFS_JOURNALNODE_HTTP_ADDRESS_DEFAULT);
+    return NetUtils.createSocketAddr(addr, DEFAULT_PORT,
+        DFS_JOURNALNODE_HTTP_ADDRESS_KEY);
+  }
+
   public static Journal getJournalFromContext(ServletContext context) {
-    return (Journal) context.getAttribute(JOURNAL_ATTRIBUTE_KEY);
+    return (Journal) context.getAttribute(JN_ATTRIBUTE_KEY);
   }
 
   public static Configuration getConfFromContext(ServletContext context) {
     return (Configuration) context.getAttribute(JspHelper.CURRENT_CONF);
-  }
-
-  /**
-   * Download <code>edits</code> files from another journal service
-   * 
-   * @return true if a new image has been downloaded and needs to be loaded
-   * @throws IOException
-   */
-  boolean downloadEditFiles(final String jnHostPort,
-      final RemoteEditLogManifest manifest) throws IOException {
-
-    // Sanity check manifest
-    if (manifest.getLogs().isEmpty()) {
-      throw new IOException("Found no edit logs to download");
-    }
-
-    try {
-      Boolean b = UserGroupInformation.getCurrentUser().doAs(
-          new PrivilegedExceptionAction<Boolean>() {
-
-            @Override
-            public Boolean run() throws Exception {
-              // get edits file
-              for (RemoteEditLog log : manifest.getLogs()) {
-                TransferFsImage.downloadEditsToStorage(jnHostPort, log,
-                    localJournal.getStorage());
-              }
-              return true;
-            }
-          });
-      return b.booleanValue();
-    } catch (InterruptedException e) {
-      throw new RuntimeException(e);
-    }
   }
 }

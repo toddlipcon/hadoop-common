@@ -20,8 +20,11 @@ package org.apache.hadoop.hdfs.qjournal;
 import static org.junit.Assert.*;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.URL;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
@@ -63,7 +66,7 @@ public class TestJournalNode {
   @Test
   public void testJournal() throws Exception {
     IPCLoggerChannel ch = new IPCLoggerChannel(
-        conf, JID, jn.getBoundAddress());
+        conf, JID, jn.getBoundIpcAddress());
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
@@ -109,7 +112,7 @@ public class TestJournalNode {
   @Test
   public void testReturnsSegmentInfoAtEpochTransition() throws Exception {
     IPCLoggerChannel ch = new IPCLoggerChannel(
-        conf, JID, jn.getBoundAddress());
+        conf, JID, jn.getBoundIpcAddress());
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
@@ -140,6 +143,19 @@ public class TestJournalNode {
     assertEquals(3, response.getLastSegment().getStartTxId());
     assertEquals(2, response.getLastSegment().getEndTxId());
     assertTrue(response.getLastSegment().getIsInProgress());
+  }
+  
+  @Test
+  public void testHttpServer() throws Exception {
+    InetSocketAddress addr = jn.getBoundHttpAddress();
+    assertTrue(addr.getPort() > 0);
+    
+    String pageContents = DFSTestUtil.urlGet(new URL("http://localhost:" +
+        addr.getPort() + "/jmx"));
+    assertTrue("Bad contents: " + pageContents,
+        pageContents.contains(
+            "Hadoop:service=JournalNode,name=JvmMetrics"));
+
   }
   
   // TODO:

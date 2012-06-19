@@ -159,6 +159,21 @@ public abstract class Storage extends StorageInfo {
   }
   
   /**
+   * @return A list of the given File in every available storage directory,
+   * regardless of whether it might exist.
+   */
+  public List<File> getFiles(StorageDirType dirType, String fileName) {
+    ArrayList<File> list = new ArrayList<File>();
+    Iterator<StorageDirectory> it =
+      (dirType == null) ? dirIterator() : dirIterator(dirType);
+    for ( ;it.hasNext(); ) {
+      list.add(new File(it.next().getCurrentDir(), fileName));
+    }
+    return list;
+  }
+
+
+  /**
    * Return default iterator
    * This iterator returns all entries in storageDirs
    */
@@ -967,5 +982,11 @@ public abstract class Storage extends StorageInfo {
       }
     }
     return false;
+  }
+
+
+  // TODO: can we move some of the NNStorage stuff up to Storage?
+  public void reportErrorOnFile(File f) {
+    LOG.warn("Error reported on file " + f);
   }
 }

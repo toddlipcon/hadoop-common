@@ -61,7 +61,10 @@ public class Journal implements Closeable {
   public void close() throws IOException {
     storage.close();
   }
-
+  
+  JNStorage getStorage() {
+    return storage;
+  }
 
   public GetEpochInfoResponseProto getEpochInfo() throws IOException {
     return GetEpochInfoResponseProto.newBuilder()

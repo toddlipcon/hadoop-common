@@ -34,6 +34,10 @@ class JNStorage extends Storage {
     return false;
   }
 
+  File findFinalizedEditsFile(long startTxId, long endTxId) {
+    throw new AssertionError("TODO");
+  }
+
   void format() throws IOException {
     LOG.info("Formatting journal storage directory " + 
         sd);

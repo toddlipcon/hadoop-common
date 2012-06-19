@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.hdfs.server.journalservice;
+package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,7 +36,6 @@ import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.server.common.JspHelper;
 import org.apache.hadoop.hdfs.server.namenode.GetImageServlet;
 import org.apache.hadoop.hdfs.server.namenode.GetImageServlet.GetImageParams;
-import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.TransferFsImage;
 import org.apache.hadoop.hdfs.util.DataTransferThrottler;
@@ -90,7 +89,7 @@ public class GetJournalEditServlet extends HttpServlet {
       final HttpServletResponse response) throws ServletException, IOException {
     try {
       ServletContext context = getServletContext();
-      final NNStorage storage = JournalHttpServer
+      final JNStorage storage = JournalNodeHttpServer
           .getJournalFromContext(context).getStorage();
 
       final GetImageParams parsedParams = new GetImageParams(request, response);
