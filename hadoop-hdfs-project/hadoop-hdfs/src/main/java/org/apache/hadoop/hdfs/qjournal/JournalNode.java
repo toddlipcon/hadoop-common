@@ -165,6 +165,12 @@ public class JournalNode implements Tool, Configurable {
     return resultCode;
   }
 
+  /**
+   * Return the directory inside our configured storage
+   * dir which corresponds to a given journal. 
+   * @param jid the journal identifier
+   * @return the file, which may or may not exist yet
+   */
   private File getLogDir(String jid) {
     String dir = conf.get(DFS_JOURNALNODE_DIR_KEY,
         DFS_JOURNALNODE_DIR_DEFAULT).trim();

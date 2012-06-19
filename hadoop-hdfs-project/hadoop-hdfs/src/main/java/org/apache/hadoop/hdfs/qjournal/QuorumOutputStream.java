@@ -18,7 +18,6 @@
 package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
-import java.nio.DoubleBuffer;
 
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditsDoubleBuffer;
@@ -64,7 +63,6 @@ class QuorumOutputStream extends EditLogOutputStream {
 
   @Override
   public void abort() throws IOException {
-    // TODO Auto-generated method stub
     throw new UnsupportedOperationException();
   }
 
