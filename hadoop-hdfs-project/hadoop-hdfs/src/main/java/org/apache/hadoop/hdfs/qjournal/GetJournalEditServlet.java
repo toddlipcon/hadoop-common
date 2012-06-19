@@ -19,7 +19,6 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.File;
 import java.io.IOException;
-import java.security.PrivilegedExceptionAction;
 
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
@@ -46,6 +45,7 @@ import org.apache.hadoop.util.StringUtils;
 /**
  * This class is used by the lagging Journal service to retrieve edit file from
  * another Journal service for sync up.
+ * TODO update this
  */
 @InterfaceAudience.Private
 public class GetJournalEditServlet extends HttpServlet {
@@ -89,90 +89,99 @@ public class GetJournalEditServlet extends HttpServlet {
       LOG.debug("isValidRequestor is rejecting: " + remoteUser);
     return false;
   }
-
+  
+  private boolean checkRequestorOrSendError(Configuration conf,
+      HttpServletRequest request, HttpServletResponse response)
+          throws IOException {
+    if (UserGroupInformation.isSecurityEnabled()
+        && !isValidRequestor(request.getRemoteUser(), conf)) {
+      response
+          .sendError(HttpServletResponse.SC_FORBIDDEN,
+              "Only Namenode and another Journal service may access this servlet");
+      LOG.warn("Received non-NN/Journal request for edits from "
+          + request.getRemoteHost());
+      return false;
+    }
+    return true;
+  }
+  
+  private boolean checkStorageInfoOrSendError(JNStorage storage,
+      HttpServletRequest request, HttpServletResponse response)
+      throws IOException {
+    String myStorageInfoString = storage.toColonSeparatedString();
+    String theirStorageInfoString = request.getParameter(STORAGEINFO_PARAM);
+    
+    if (theirStorageInfoString != null
+        && !myStorageInfoString.equals(theirStorageInfoString)) {
+      response.sendError(HttpServletResponse.SC_FORBIDDEN,
+              "This node has storage info " + myStorageInfoString
+                  + " but the requesting node expected "
+                  + theirStorageInfoString);
+      LOG.warn("Received an invalid request file transfer request "
+          + " with storage info " + theirStorageInfoString);
+      return false;
+    }
+    return true;
+  }
+  
   @Override
   public void doGet(final HttpServletRequest request,
       final HttpServletResponse response) throws ServletException, IOException {
     try {
       final ServletContext context = getServletContext();
-      final Params parsedParams = new Params(request);
-
-      // Check security
       final Configuration conf = (Configuration) getServletContext()
           .getAttribute(JspHelper.CURRENT_CONF);
-      if (UserGroupInformation.isSecurityEnabled()
-          && !isValidRequestor(request.getRemoteUser(), conf)) {
-        response
-            .sendError(HttpServletResponse.SC_FORBIDDEN,
-                "Only Namenode and another Journal service may access this servlet");
-        LOG.warn("Received non-NN/Journal request for edits from "
-            + request.getRemoteHost());
+      final Params parsedParams = new Params(request);
+      final JNStorage storage = JournalNodeHttpServer
+          .getJournalFromContext(context, parsedParams.getJournalId()).getStorage();
+
+      // Check security
+      if (!checkRequestorOrSendError(conf, request, response)) {
         return;
       }
 
       // Check that the namespace info is correct
-      final JNStorage storage = JournalNodeHttpServer
-          .getJournalFromContext(context, parsedParams.getJournalId()).getStorage();
-      String myStorageInfoString = storage.toColonSeparatedString();
-      String theirStorageInfoString = parsedParams.getStorageInfoString();
-      if (theirStorageInfoString != null
-          && !myStorageInfoString.equals(theirStorageInfoString)) {
-        response
-            .sendError(HttpServletResponse.SC_FORBIDDEN,
-                "This node has storage info " + myStorageInfoString
-                    + " but the requesting node expected "
-                    + theirStorageInfoString);
-        LOG.warn("Received an invalid request file transfer request "
-            + " with storage info " + theirStorageInfoString);
+      if (!checkStorageInfoOrSendError(storage, request, response)) {
         return;
       }
 
-      UserGroupInformation.getCurrentUser().doAs(
-          new PrivilegedExceptionAction<Void>() {
-            @Override
-            public Void run() throws Exception {
-              long startTxId = parsedParams.getStartTxId();
-              long endTxId = parsedParams.getEndTxId();
-              File editFile = storage.findFinalizedEditsFile(startTxId,
-                  endTxId);
+      long startTxId = parsedParams.getStartTxId();
+      long endTxId = parsedParams.getEndTxId();
 
-              GetImageServlet.setVerificationHeaders(response, editFile);
-              GetImageServlet.setFileNameHeaders(response, editFile);
-              
-              DataTransferThrottler throttler = GetImageServlet.getThrottler(conf);
+      File editFile = storage.findFinalizedEditsFile(startTxId,
+          endTxId);
 
-              // send edits
-              FaultInjector.instance.beforeSendEdits();
-              ServletOutputStream output = response.getOutputStream();
-              try {
-                TransferFsImage.getFileServer(output, editFile, throttler);
-              } finally {
-                if (output != null)
-                  output.close();
-              }
+      GetImageServlet.setVerificationHeaders(response, editFile);
+      GetImageServlet.setFileNameHeaders(response, editFile);
+      
+      DataTransferThrottler throttler = GetImageServlet.getThrottler(conf);
 
-              return null;
-            }
-          });
+      // send edits
+      FaultInjector.instance.beforeSendEdits();
+      ServletOutputStream output = response.getOutputStream();
+      try {
+        TransferFsImage.getFileServer(output, editFile, throttler);
+      } finally {
+        if (output != null)
+          output.close();
+      }
 
     } catch (Exception ie) {
       String errMsg = "getedit failed. " + StringUtils.stringifyException(ie);
-      response.sendError(HttpServletResponse.SC_GONE, errMsg);
+      response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, errMsg);
       throw new IOException(errMsg);
     }
   }
-  
+
   private static class Params {
     private final long startTxId;
     private final long endTxId;
     private final String journalId;
-    private final String storageInfoString;
     
     Params(HttpServletRequest req) throws IOException {
       startTxId = GetImageParams.parseLongParam(req, START_TXID_PARAM);
       endTxId = GetImageParams.parseLongParam(req, END_TXID_PARAM);
       journalId = req.getParameter(JOURNAL_ID_PARAM);
-      storageInfoString = req.getParameter(STORAGEINFO_PARAM);
     }
     
     long getStartTxId() {
@@ -183,9 +192,6 @@ public class GetJournalEditServlet extends HttpServlet {
     }
     String getJournalId() {
       return journalId;
-    }
-    String getStorageInfoString() {
-      return storageInfoString;
     }
   }
   
