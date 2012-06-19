@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.qjournal;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -40,10 +41,17 @@ interface AsyncLogger {
   public ListenableFuture<GetEditLogManifestResponseProto> getEditLogManifest(
       long fromTxnId);
 
+  public ListenableFuture<PaxosPrepareResponseProto> paxosPrepare(
+      String decisionId);
+  
+  public ListenableFuture<Void> paxosAccept(String decisionId,
+      byte[] value);
+
   public void setEpoch(long e);
 
   /**
    * TODO: this kind of breaks the abstraction :(
    */
   public String getHostNameForHttpFetch();
+
 }

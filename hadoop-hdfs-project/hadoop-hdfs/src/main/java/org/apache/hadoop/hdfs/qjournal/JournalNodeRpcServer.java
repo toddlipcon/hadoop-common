@@ -26,6 +26,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.QJournalProtocolService;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
@@ -142,5 +143,20 @@ class JournalNodeRpcServer implements QJournalProtocol {
         .setManifest(PBHelper.convert(manifest))
         .setHttpPort(jn.getBoundHttpAddress().getPort())
         .build();
+  }
+
+  @Override
+  public PaxosPrepareResponseProto paxosPrepare(RequestInfo reqInfo,
+      String decisionId) throws IOException {
+    return jn.getOrCreateJournal(reqInfo.getJournalId())
+        .paxosPrepare(reqInfo, decisionId);
+  }
+
+  @Override
+  public void paxosAccept(RequestInfo reqInfo, String decisionId, byte[] value)
+      throws IOException {
+    jn.getOrCreateJournal(reqInfo.getJournalId())
+        .paxosAccept(reqInfo, decisionId, value);
+    
   }
 }

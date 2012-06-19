@@ -24,6 +24,7 @@ import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.security.KerberosInfo;
@@ -78,4 +79,9 @@ public interface QJournalProtocol {
   
   GetEditLogManifestResponseProto getEditLogManifest(
       String jid, long sinceTxId) throws IOException;
+  
+  public PaxosPrepareResponseProto paxosPrepare(RequestInfo reqInfo,
+      String decisionId) throws IOException;
+  public void paxosAccept(RequestInfo reqInfo,
+      String decisionId, byte[] value) throws IOException;
 }

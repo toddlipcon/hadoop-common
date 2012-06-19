@@ -19,7 +19,6 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.net.URL;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
@@ -28,11 +27,11 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolTranslatorPB;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
-import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
 
@@ -178,8 +177,30 @@ class IPCLoggerChannel implements AsyncLogger {
   }
 
   @Override
+  public ListenableFuture<PaxosPrepareResponseProto> paxosPrepare(
+      final String decisionId) {
+    return executor.submit(new Callable<PaxosPrepareResponseProto>() {
+      @Override
+      public PaxosPrepareResponseProto call() throws IOException {
+        return getProxy().paxosPrepare(createReqInfo(), decisionId);
+      }
+    });
+  }
+
+  @Override
+  public ListenableFuture<Void> paxosAccept(final String decisionId,
+      final byte[] value) {
+    return executor.submit(new Callable<Void>() {
+      @Override
+      public Void call() throws IOException {
+        getProxy().paxosAccept(createReqInfo(), decisionId, value);
+        return null;
+      }
+    });
+  }
+
+  @Override
   public String toString() {
     return "Channel to journal node " + addr; 
   }
-
 }

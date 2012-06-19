@@ -22,11 +22,13 @@ import static org.junit.Assert.*;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URL;
+import java.util.concurrent.ExecutionException;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.test.GenericTestUtils;
@@ -43,9 +45,14 @@ public class TestJournalNode {
   private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
       12345, "mycluster", "my-bp", 0L, 0);
   private static final String JID = "test-journalid";
+
+  private static final String TEST_DECISION = "decision-1";
+  private static final byte[] TEST_PAXOS_VALUE_1 = "val-1".getBytes();
+  
   private JournalNode jn;
   private Journal journal; 
   private Configuration conf = new Configuration();
+  private IPCLoggerChannel ch;
 
   @Before
   public void setup() throws Exception {
@@ -58,6 +65,8 @@ public class TestJournalNode {
     // TODO: this should not have to be done explicitly in the unit
     // test, really, I dont think..
     journal.format();
+    
+    ch = new IPCLoggerChannel(conf, JID, jn.getBoundIpcAddress());
   }
   
   @After
@@ -113,8 +122,6 @@ public class TestJournalNode {
   
   @Test
   public void testReturnsSegmentInfoAtEpochTransition() throws Exception {
-    IPCLoggerChannel ch = new IPCLoggerChannel(
-        conf, JID, jn.getBoundIpcAddress());
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
@@ -178,6 +185,62 @@ public class TestJournalNode {
             EDITS_DATA);
 
     assertArrayEquals(expected, retrievedViaHttp);
+  }
+
+  /**
+   * Test that the JournalNode performs correctly as a Paxos
+   * <em>Acceptor</em> process.
+   * 
+   * @throws Exception
+   */
+  @Test
+  public void testPaxosAcceptorBehavior() throws Exception {
+    // We need to run newEpoch() first, or else we have no way to distinguish
+    // different proposals for the same decision.
+    try {
+      ch.paxosPrepare("decision-1").get();
+      fail("Did not throw IllegalState when trying to run paxos without an epoch");
+    } catch (ExecutionException ise) {
+      GenericTestUtils.assertExceptionContains("bad epoch", ise);
+    }
+    
+    ch.newEpoch(FAKE_NSINFO, 1).get();
+    ch.setEpoch(1);
+    
+    // prepare() with no previously accepted value returns an empty protobuf
+    PaxosPrepareResponseProto prep = ch.paxosPrepare("decision-1").get();
+    System.err.println("Prep: " + prep);
+    assertFalse(prep.hasAcceptedEpoch());
+    assertFalse(prep.hasAcceptedValue());
+    
+    // accept() should save the accepted value in persistent storage
+    ch.paxosAccept(TEST_DECISION, TEST_PAXOS_VALUE_1).get();
+
+    // So another prepare() call from a new epoch would return this value
+    ch.newEpoch(FAKE_NSINFO, 2);
+    ch.setEpoch(2);
+    prep = ch.paxosPrepare("decision-1").get();
+    assertEquals(1, prep.getAcceptedEpoch());
+    assertArrayEquals(TEST_PAXOS_VALUE_1, prep.getAcceptedValue().toByteArray());
+    
+    // A prepare() or accept() call from an earlier epoch should now be rejected
+    ch.setEpoch(1);
+    try {
+      ch.paxosPrepare(TEST_DECISION).get();
+      fail("prepare from earlier epoch not rejected");
+    } catch (ExecutionException ioe) {
+      GenericTestUtils.assertExceptionContains(
+          "epoch 1 is less than the last promised epoch 2",
+          ioe);
+    }
+    try {
+      ch.paxosAccept(TEST_DECISION, new byte[0]).get();
+      fail("accept from earlier epoch not rejected");
+    } catch (ExecutionException ioe) {
+      GenericTestUtils.assertExceptionContains(
+          "epoch 1 is less than the last promised epoch 2",
+          ioe);
+    }
   }
   
   // TODO:

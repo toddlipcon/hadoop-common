@@ -42,6 +42,7 @@ public abstract class LongContainingFile {
       fos.close();
       fos = null;
     } finally {
+      // TODO use abort() here if unsuccessful!
       IOUtils.cleanup(LOG, fos);
     }
   }

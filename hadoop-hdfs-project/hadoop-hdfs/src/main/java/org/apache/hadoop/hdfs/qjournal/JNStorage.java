@@ -44,12 +44,25 @@ class JNStorage extends Storage {
     }
     return ret;
   }
+  
+  File getPaxosFile(String decisionId) {
+    // TODO: sanity-check decisionId
+    return new File(getPaxosDir(), decisionId);
+  }
+  
+  File getPaxosDir() {
+    return new File(sd.getCurrentDir(), "paxos");
+  }
+
 
   void format() throws IOException {
     LOG.info("Formatting journal storage directory " + 
         sd);
     sd.clearDirectory();
     writeProperties(sd);
+    if (!getPaxosDir().mkdirs()) {
+      throw new IOException("Could not create paxos dir: " + getPaxosDir());
+    }
   }
 
   void formatIfEmpty(NamespaceInfo nsInfo) throws IOException {

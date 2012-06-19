@@ -61,7 +61,42 @@ public class TestNNWithQJM {
     } finally {
       cluster.shutdown();
     }
-    
-    
   }
+  
+  @Test
+  public void testNewNamenodeTakesOverWriter() throws Exception {
+    conf.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
+        MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn1");
+    conf.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
+        "qjournal://localhost/myjournal");
+    mjc.setupClientConfigs(conf);
+    
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+      .numDataNodes(0)
+      .manageNameDfsDirs(false)
+      .build();
+    try {
+      cluster.getFileSystem().mkdirs(TEST_PATH);
+      
+      // Start a second NN pointed to the same quorum
+      Configuration conf2 = new Configuration();
+      conf2.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
+          MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn2");
+      conf2.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
+          "qjournal://localhost/myjournal");
+      mjc.setupClientConfigs(conf2);
+      MiniDFSCluster cluster2 = new MiniDFSCluster.Builder(conf2)
+        .numDataNodes(0)
+        .manageNameDfsDirs(false)
+        .build();
+      try {
+        assertTrue(cluster2.getFileSystem().exists(TEST_PATH));
+      } finally {
+        cluster2.shutdown();
+      }
+    } finally {
+      cluster.shutdown();
+    }
+  }
+
 }

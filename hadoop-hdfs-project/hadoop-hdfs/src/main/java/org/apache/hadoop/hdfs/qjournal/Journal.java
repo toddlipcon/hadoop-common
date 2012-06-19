@@ -1,14 +1,20 @@
 package org.apache.hadoop.hdfs.qjournal;
 
+import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStreamWriter;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.LogSegmentProto;
@@ -19,8 +25,12 @@ import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
+import org.apache.hadoop.hdfs.util.AtomicFileOutputStream;
+import org.apache.hadoop.io.IOUtils;
 
 import com.google.common.base.Preconditions;
+import com.google.common.io.Files;
+import com.google.protobuf.ByteString;
 
 public class Journal implements Closeable {
   public static final Log LOG = LogFactory.getLog(Journal.class);
@@ -128,6 +138,11 @@ public class Journal implements Closeable {
           " is less than the last promised epoch " +
           lastPromisedEpoch.get());
     }
+    
+    // TODO: should other requests check the _exact_ epoch instead of
+    // the <= check? <= should probably only be necessary for the
+    // first calls
+    
     // TODO: some check on serial number that they only increase from a given
     // client
   }
@@ -186,6 +201,77 @@ public class Journal implements Closeable {
     RemoteEditLogManifest manifest = new RemoteEditLogManifest(
         fjm.getRemoteEditLogs(sinceTxId));
     return manifest;
+  }
+
+  public synchronized PaxosPrepareResponseProto paxosPrepare(
+      RequestInfo reqInfo, String decisionId)
+      throws IOException {
+    checkRequest(reqInfo);
+    PaxosPrepareResponseProto ret = getPersistedPaxosData(decisionId);
+    LOG.info("Prepared paxos for decision " + decisionId + ": " + ret);
+    return ret;
+  }
+
+  private PaxosPrepareResponseProto getPersistedPaxosData(String decisionId)
+      throws IOException {
+    File f = storage.getPaxosFile(decisionId);
+    if (!f.exists()) {
+      // Default instance has no fields filled in (they're optional)
+      return PaxosPrepareResponseProto.getDefaultInstance();
+    }
+    
+    InputStream in = new FileInputStream(f);
+    try {
+      return PaxosPrepareResponseProto.parseDelimitedFrom(in);
+    } finally {
+      IOUtils.closeStream(in);
+    }
+  }
+
+  private void persistPaxosData(String decisionId,
+      PaxosPrepareResponseProto newData) throws IOException {
+    File f = storage.getPaxosFile(decisionId);
+    boolean success = false;
+    AtomicFileOutputStream fos = new AtomicFileOutputStream(f);
+    try {
+      newData.writeDelimitedTo(fos);
+      fos.write('\n');
+      // Write human-readable data after the protobuf. This is only
+      // to assist in debugging -- it's not parsed at all.
+      OutputStreamWriter writer = new OutputStreamWriter(fos);
+      
+      writer.write(String.valueOf(newData));
+      writer.write('\n');
+      writer.flush();
+      
+      fos.flush();
+      success = true;
+    } finally {
+      if (success) {
+        IOUtils.closeStream(fos);
+      } else {
+        fos.abort();
+      }
+    }
+  }
+
+  public synchronized void paxosAccept(RequestInfo reqInfo, String decisionId, byte[] value)
+      throws IOException {
+    checkRequest(reqInfo);
+    
+    PaxosPrepareResponseProto oldData = getPersistedPaxosData(decisionId);
+    PaxosPrepareResponseProto newData = PaxosPrepareResponseProto.newBuilder()
+        .setAcceptedEpoch(reqInfo.getEpoch())
+        .setAcceptedValue(ByteString.copyFrom(value))
+        .build();
+    if (oldData != null) {
+      Preconditions.checkState(oldData.getAcceptedEpoch() < reqInfo.getEpoch(),
+          "Bad paxos transition, out-of-order epochs.\nOld: %s\nNew: %s\n",
+          oldData, newData);
+    }
+    
+    persistPaxosData(decisionId, newData);
+    LOG.info("Persisted new paxos data for decision " + decisionId + ": " + newData);
   }
 
 }

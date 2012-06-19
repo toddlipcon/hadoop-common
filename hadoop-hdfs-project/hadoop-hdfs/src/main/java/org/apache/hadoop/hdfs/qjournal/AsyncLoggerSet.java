@@ -18,6 +18,8 @@
 package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
@@ -27,9 +29,11 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -81,7 +85,53 @@ class AsyncLoggerSet {
     return resps;
   }
   
+  
+  byte[] runPaxosConsensus(String decisionName,
+      byte[] valueToPropose) throws IOException {
 
+    // ================================================
+    // Step 1. Prepare.
+    // ================================================
+    
+    QuorumCall<AsyncLogger,PaxosPrepareResponseProto> prepare =
+        paxosPrepare(decisionName);
+    Map<AsyncLogger, PaxosPrepareResponseProto> prepareResponses =
+        waitForWriteQuorum(prepare, NEWEPOCH_TIMEOUT_MS);
+    
+    PaxosPrepareResponseProto bestResponse = Collections.max(
+        prepareResponses.values(), new Comparator<PaxosPrepareResponseProto>() {
+          @Override
+          public int compare(PaxosPrepareResponseProto o1,
+              PaxosPrepareResponseProto o2) {
+            return ComparisonChain.start()
+                .compare(o1.hasAcceptedEpoch(), o2.hasAcceptedEpoch())
+                .compare(o1.getAcceptedEpoch(), o2.getAcceptedEpoch())
+                .result();
+          }
+        });
+    
+    if (bestResponse.hasAcceptedEpoch()) {
+      LOG.info("Using already-accepted response for paxos instance " +
+          decisionName + ": " + bestResponse);
+      
+      valueToPropose = bestResponse.getAcceptedValue().toByteArray();
+    }
+    
+    // ================================================
+    // Step 2. Accept.
+    // ================================================
+
+    QuorumCall<AsyncLogger,Void> accept = paxosAccept(decisionName, valueToPropose);
+    waitForWriteQuorum(accept, NEWEPOCH_TIMEOUT_MS);
+
+    // TODO: some sanity-checks, eg if anyone returns an IllegalStateException
+    // we should probably bail!
+    
+    return valueToPropose;
+  }
+      
+      
+  
   private void setEpoch(long e) {
     for (AsyncLogger l : loggers) {
       l.setEpoch(e);
@@ -189,6 +239,35 @@ class AsyncLoggerSet {
     }
     return QuorumCall.create(calls);
   }
+  
+
+  private QuorumCall<AsyncLogger, PaxosPrepareResponseProto>
+      paxosPrepare(String decisionId) {
+    Map<AsyncLogger,
+      ListenableFuture<PaxosPrepareResponseProto>> calls
+      = Maps.newHashMap();
+    for (AsyncLogger logger : loggers) {
+      ListenableFuture<PaxosPrepareResponseProto> future =
+          logger.paxosPrepare(decisionId);
+      calls.put(logger, future);
+    }
+    return QuorumCall.create(calls);
+  }
+
+  private QuorumCall<AsyncLogger,Void>
+      paxosAccept(String decisionId, byte[] value) {
+    Preconditions.checkArgument(value != null);
+    
+    Map<AsyncLogger, ListenableFuture<Void>> calls
+      = Maps.newHashMap();
+    for (AsyncLogger logger : loggers) {
+      ListenableFuture<Void> future =
+          logger.paxosAccept(decisionId, value);
+      calls.put(logger, future);
+    }
+    return QuorumCall.create(calls);
+  }
+  
 
   int getMajoritySize() {
     return loggers.size() / 2 + 1;

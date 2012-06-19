@@ -17,6 +17,9 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalId
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosAcceptRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
@@ -27,6 +30,7 @@ import org.apache.hadoop.ipc.ProtocolMetaInterface;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RpcClientUtil;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.RpcController;
 import com.google.protobuf.ServiceException;
 
@@ -158,6 +162,35 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
           GetEditLogManifestRequestProto.newBuilder()
             .setJid(convertJournalId(jid))
             .setSinceTxId(sinceTxId)
+            .build());
+    } catch (ServiceException e) {
+      throw ProtobufHelper.getRemoteException(e);
+    }
+  }
+
+  @Override
+  public PaxosPrepareResponseProto paxosPrepare(RequestInfo reqInfo,
+      String decisionId) throws IOException {
+    try {
+      return rpcProxy.paxosPrepare(NULL_CONTROLLER,
+          PaxosPrepareRequestProto.newBuilder()
+            .setReqInfo(convert(reqInfo))
+            .setDecisionId(decisionId)
+            .build());
+    } catch (ServiceException e) {
+      throw ProtobufHelper.getRemoteException(e);
+    }
+  }
+
+  @Override
+  public void paxosAccept(RequestInfo reqInfo, String decisionId, byte[] value)
+      throws IOException {
+    try {
+      rpcProxy.paxosAccept(NULL_CONTROLLER,
+          PaxosAcceptRequestProto.newBuilder()
+            .setReqInfo(convert(reqInfo))
+            .setDecisionId(decisionId)
+            .setValue(ByteString.copyFrom(value))
             .build());
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);

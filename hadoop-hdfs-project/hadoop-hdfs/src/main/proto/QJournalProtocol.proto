@@ -143,6 +143,32 @@ message SyncLogsResponseProto {
 }
 
 /**
+ * paxosPrepare()
+ */
+message PaxosPrepareRequestProto {
+  required RequestInfoProto reqInfo = 1;
+  required string decisionId = 2;
+}
+
+message PaxosPrepareResponseProto {
+  optional bytes acceptedValue = 1;
+  optional uint64 acceptedEpoch = 2;
+}
+
+/**
+ * paxosAccept()
+ */
+message PaxosAcceptRequestProto {
+  required RequestInfoProto reqInfo = 1;
+  required string decisionId = 2;
+  required bytes value = 3;
+}
+
+message PaxosAcceptResponseProto {
+}
+
+
+/**
  * readLog()
  */
 message ReadLogRequestProto {
@@ -183,6 +209,11 @@ service QJournalProtocolService {
 
   rpc getEditLogManifest(GetEditLogManifestRequestProto)
       returns (GetEditLogManifestResponseProto);
+
+  rpc paxosPrepare(PaxosPrepareRequestProto)
+      returns (PaxosPrepareResponseProto);
+  rpc paxosAccept(PaxosAcceptRequestProto)
+      returns (PaxosAcceptResponseProto);
 
   rpc syncLogs(SyncLogsRequestProto)
       returns (SyncLogsResponseProto);

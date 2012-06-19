@@ -78,7 +78,7 @@ public class TestQuorumJournalManager {
       cluster.shutdown();
     }
   }
-
+  
   private void assertExistsInQuorum(MiniJournalCluster cluster,
       String fname) {
     int count = 0;

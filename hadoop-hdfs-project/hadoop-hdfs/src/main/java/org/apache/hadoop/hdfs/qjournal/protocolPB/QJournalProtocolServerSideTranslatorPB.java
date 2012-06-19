@@ -15,6 +15,10 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalRe
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.JournalResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosAcceptRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosAcceptResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
@@ -129,6 +133,31 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
   }
 
 
+  @Override
+  public PaxosPrepareResponseProto paxosPrepare(RpcController controller,
+      PaxosPrepareRequestProto request) throws ServiceException {
+    try {
+      return impl.paxosPrepare(convert(request.getReqInfo()),
+          request.getDecisionId());
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
+  }
+
+  @Override
+  public PaxosAcceptResponseProto paxosAccept(RpcController controller,
+      PaxosAcceptRequestProto request) throws ServiceException {
+    try {
+      impl.paxosAccept(convert(request.getReqInfo()),
+          request.getDecisionId(),
+          request.getValue().toByteArray());
+      return PaxosAcceptResponseProto.getDefaultInstance();
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
+  }
+
+  
   private RequestInfo convert(
       QJournalProtocolProtos.RequestInfoProto reqInfo) {
     return new RequestInfo(

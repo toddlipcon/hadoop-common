@@ -34,7 +34,7 @@ import org.apache.hadoop.security.KerberosInfo;
     serverPrincipal = DFSConfigKeys.DFS_NAMENODE_USER_NAME_KEY,
     clientPrincipal = DFSConfigKeys.DFS_NAMENODE_USER_NAME_KEY)
 @ProtocolInfo(protocolName = 
-    "org.apache.hadoop.hdfs.qjournl.protocol.QJournalProtocol",
+    "org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol",
     protocolVersion = 1)
 @InterfaceAudience.Private
 public interface QJournalProtocolPB extends
