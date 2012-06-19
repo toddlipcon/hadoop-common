@@ -18,17 +18,19 @@
 
 package org.apache.hadoop.hdfs.server.namenode;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.BufferedInputStream;
-import java.io.EOFException;
 import java.io.DataInputStream;
+import java.io.EOFException;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.server.common.Storage;
 import org.apache.hadoop.io.IOUtils;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
@@ -38,7 +40,7 @@ import com.google.common.base.Throwables;
  * reads edits from a local file.
  */
 public class EditLogFileInputStream extends EditLogInputStream {
-  private final File file;
+  private final LocalOrRemoteEditLog log;
   private final long firstTxId;
   private final long lastTxId;
   private final boolean isInProgress;
@@ -48,7 +50,7 @@ public class EditLogFileInputStream extends EditLogInputStream {
     CLOSED
   }
   private State state = State.UNINIT;
-  private FileInputStream fStream = null;
+  private InputStream fStream = null;
   private int logVersion = 0;
   private FSEditLogOp.Reader reader = null;
   private FSEditLogLoader.PositionTrackingInputStream tracker = null;
@@ -81,7 +83,15 @@ public class EditLogFileInputStream extends EditLogInputStream {
    */
   public EditLogFileInputStream(File name, long firstTxId, long lastTxId,
       boolean isInProgress) {
-    this.file = name;
+    this(new LocalOrRemoteEditLog.FileLog(name),
+        firstTxId, lastTxId, isInProgress);
+  }
+  
+  public EditLogFileInputStream(LocalOrRemoteEditLog log,
+      long firstTxId, long lastTxId,
+      boolean isInProgress) {
+      
+    this.log = log;
     this.firstTxId = firstTxId;
     this.lastTxId = lastTxId;
     this.isInProgress = isInProgress;
@@ -91,7 +101,7 @@ public class EditLogFileInputStream extends EditLogInputStream {
     Preconditions.checkState(state == State.UNINIT);
     BufferedInputStream bin = null;
     try {
-      fStream = new FileInputStream(file);
+      fStream = log.getInputStream();
       bin = new BufferedInputStream(fStream);
       tracker = new FSEditLogLoader.PositionTrackingInputStream(bin);
       dataIn = new DataInputStream(tracker);
@@ -122,7 +132,7 @@ public class EditLogFileInputStream extends EditLogInputStream {
 
   @Override
   public String getName() {
-    return file.getPath();
+    return log.getName();
   }
 
   private FSEditLogOp nextOpImpl(boolean skipBrokenEdits) throws IOException {
@@ -160,7 +170,7 @@ public class EditLogFileInputStream extends EditLogInputStream {
           // we were supposed to read out of the stream.
           // So we force an EOF on all subsequent reads.
           //
-          long skipAmt = file.length() - tracker.getPos();
+          long skipAmt = log.length() - tracker.getPos();
           if (skipAmt > 0) {
             LOG.warn("skipping " + skipAmt + " bytes at the end " +
               "of edit log  '" + getName() + "': reached txid " + txId +
@@ -220,7 +230,7 @@ public class EditLogFileInputStream extends EditLogInputStream {
   @Override
   public long length() throws IOException {
     // file size + size of both buffers
-    return file.length();
+    return log.length();
   }
   
   @Override
