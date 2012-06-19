@@ -35,6 +35,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import com.google.common.base.Charsets;
+import com.google.common.primitives.Bytes;
+import com.google.common.primitives.Ints;
 
 
 public class TestJournalNode {
@@ -150,12 +152,32 @@ public class TestJournalNode {
     InetSocketAddress addr = jn.getBoundHttpAddress();
     assertTrue(addr.getPort() > 0);
     
-    String pageContents = DFSTestUtil.urlGet(new URL("http://localhost:" +
-        addr.getPort() + "/jmx"));
+    String urlRoot = "http://localhost:" + addr.getPort();
+    
+    String pageContents = DFSTestUtil.urlGet(new URL(urlRoot + "/jmx"));
     assertTrue("Bad contents: " + pageContents,
         pageContents.contains(
             "Hadoop:service=JournalNode,name=JvmMetrics"));
+    
+    // Create some edits on server side
+    IPCLoggerChannel ch = new IPCLoggerChannel(
+        conf, JID, jn.getBoundIpcAddress());
+    ch.newEpoch(FAKE_NSINFO, 1).get();
+    ch.setEpoch(1);
+    ch.startLogSegment(1).get();
+    byte[] EDITS_DATA = "hello".getBytes(Charsets.UTF_8);
+    ch.sendEdits(1, 3, EDITS_DATA).get();
+    ch.finalizeLogSegment(1, 3).get();
 
+    // Attempt to retrieve via HTTP, ensure we get the data back
+    // including the header we expected
+    byte[] retrievedViaHttp = DFSTestUtil.urlGetBytes(new URL(urlRoot +
+        "/getimage?getedit=1&startTxId=1&endTxId=3&jid=" + JID));
+    byte[] expected = Bytes.concat(
+            Ints.toByteArray(HdfsConstants.LAYOUT_VERSION),
+            EDITS_DATA);
+
+    assertArrayEquals(expected, retrievedViaHttp);
   }
   
   // TODO:

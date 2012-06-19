@@ -9,6 +9,7 @@ import org.apache.hadoop.hdfs.server.common.Storage.StorageState;
 import org.apache.hadoop.hdfs.server.common.Storage;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
+import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
 class JNStorage extends Storage {
@@ -34,8 +35,14 @@ class JNStorage extends Storage {
     return false;
   }
 
-  File findFinalizedEditsFile(long startTxId, long endTxId) {
-    throw new AssertionError("TODO");
+  File findFinalizedEditsFile(long startTxId, long endTxId) throws IOException {
+    File ret = new File(sd.getCurrentDir(),
+        NNStorage.getFinalizedEditsFileName(startTxId, endTxId));
+    if (!ret.exists()) {
+      throw new IOException(
+          "No edits file for range " + startTxId + "-" + endTxId);
+    }
+    return ret;
   }
 
   void format() throws IOException {

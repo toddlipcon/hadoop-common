@@ -406,7 +406,7 @@ public class GetImageServlet extends HttpServlet {
       return fetchLatest;
     }
     
-    private static long parseLongParam(HttpServletRequest request, String param)
+    public static long parseLongParam(HttpServletRequest request, String param)
         throws IOException {
       // Parse the 'txid' parameter which indicates which image is to be
       // fetched.

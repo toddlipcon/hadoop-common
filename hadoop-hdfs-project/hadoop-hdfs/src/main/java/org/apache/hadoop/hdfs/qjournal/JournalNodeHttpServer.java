@@ -142,8 +142,10 @@ public class JournalNodeHttpServer {
         DFS_JOURNALNODE_HTTP_ADDRESS_KEY);
   }
 
-  public static Journal getJournalFromContext(ServletContext context) {
-    return (Journal) context.getAttribute(JN_ATTRIBUTE_KEY);
+  public static Journal getJournalFromContext(ServletContext context, String jid) {
+    JournalNode jn = (JournalNode)context.getAttribute(JN_ATTRIBUTE_KEY);
+    // TODO: we probably don't want to create in this case!
+    return jn.getOrCreateJournal(jid);
   }
 
   public static Configuration getConfFromContext(ServletContext context) {

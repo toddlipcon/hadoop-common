@@ -53,6 +53,12 @@ public class GetJournalEditServlet extends HttpServlet {
   private static final long serialVersionUID = -4635891628211723009L;
   private static final Log LOG = LogFactory.getLog(GetJournalEditServlet.class);
 
+  private static final String START_TXID_PARAM = "startTxId";
+  private static final String END_TXID_PARAM = "endTxId";
+  private static final String JOURNAL_ID_PARAM = "jid";
+  private static final String STORAGEINFO_PARAM = "storageInfo";
+
+
   // TODO: create security tests
   protected boolean isValidRequestor(String remoteUser, Configuration conf)
       throws IOException {
@@ -88,15 +94,12 @@ public class GetJournalEditServlet extends HttpServlet {
   public void doGet(final HttpServletRequest request,
       final HttpServletResponse response) throws ServletException, IOException {
     try {
-      ServletContext context = getServletContext();
-      final JNStorage storage = JournalNodeHttpServer
-          .getJournalFromContext(context).getStorage();
+      final ServletContext context = getServletContext();
+      final Params parsedParams = new Params(request);
 
-      final GetImageParams parsedParams = new GetImageParams(request, response);
-
+      // Check security
       final Configuration conf = (Configuration) getServletContext()
           .getAttribute(JspHelper.CURRENT_CONF);
-
       if (UserGroupInformation.isSecurityEnabled()
           && !isValidRequestor(request.getRemoteUser(), conf)) {
         response
@@ -107,6 +110,9 @@ public class GetJournalEditServlet extends HttpServlet {
         return;
       }
 
+      // Check that the namespace info is correct
+      final JNStorage storage = JournalNodeHttpServer
+          .getJournalFromContext(context, parsedParams.getJournalId()).getStorage();
       String myStorageInfoString = storage.toColonSeparatedString();
       String theirStorageInfoString = parsedParams.getStorageInfoString();
       if (theirStorageInfoString != null
@@ -125,32 +131,26 @@ public class GetJournalEditServlet extends HttpServlet {
           new PrivilegedExceptionAction<Void>() {
             @Override
             public Void run() throws Exception {
-              if (parsedParams.isGetEdit()) {
-                long startTxId = parsedParams.getStartTxId();
-                long endTxId = parsedParams.getEndTxId();
-                File editFile = storage.findFinalizedEditsFile(startTxId,
-                    endTxId);
+              long startTxId = parsedParams.getStartTxId();
+              long endTxId = parsedParams.getEndTxId();
+              File editFile = storage.findFinalizedEditsFile(startTxId,
+                  endTxId);
 
-                GetImageServlet.setVerificationHeaders(response, editFile);
-                GetImageServlet.setFileNameHeaders(response, editFile);
-                
-                DataTransferThrottler throttler = GetImageServlet.getThrottler(conf);
+              GetImageServlet.setVerificationHeaders(response, editFile);
+              GetImageServlet.setFileNameHeaders(response, editFile);
+              
+              DataTransferThrottler throttler = GetImageServlet.getThrottler(conf);
 
-                // send edits
-                FaultInjector.instance.beforeSendEdits();
-                ServletOutputStream output = response.getOutputStream();
-                try {
-                  TransferFsImage.getFileServer(output, editFile, throttler);
-                } finally {
-                  if (output != null)
-                    output.close();
-                }
-
-              } else {
-                response
-                    .sendError(HttpServletResponse.SC_METHOD_NOT_ALLOWED,
-                        "The server only accepts getedit request. This request is not getedit.");
+              // send edits
+              FaultInjector.instance.beforeSendEdits();
+              ServletOutputStream output = response.getOutputStream();
+              try {
+                TransferFsImage.getFileServer(output, editFile, throttler);
+              } finally {
+                if (output != null)
+                  output.close();
               }
+
               return null;
             }
           });
@@ -159,6 +159,33 @@ public class GetJournalEditServlet extends HttpServlet {
       String errMsg = "getedit failed. " + StringUtils.stringifyException(ie);
       response.sendError(HttpServletResponse.SC_GONE, errMsg);
       throw new IOException(errMsg);
+    }
+  }
+  
+  private static class Params {
+    private final long startTxId;
+    private final long endTxId;
+    private final String journalId;
+    private final String storageInfoString;
+    
+    Params(HttpServletRequest req) throws IOException {
+      startTxId = GetImageParams.parseLongParam(req, START_TXID_PARAM);
+      endTxId = GetImageParams.parseLongParam(req, END_TXID_PARAM);
+      journalId = req.getParameter(JOURNAL_ID_PARAM);
+      storageInfoString = req.getParameter(STORAGEINFO_PARAM);
+    }
+    
+    long getStartTxId() {
+      return startTxId;
+    }
+    long getEndTxId() {
+      return endTxId;
+    }
+    String getJournalId() {
+      return journalId;
+    }
+    String getStorageInfoString() {
+      return storageInfoString;
     }
   }
   
