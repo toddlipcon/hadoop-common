@@ -20,11 +20,14 @@ package org.apache.hadoop.hdfs.qjournal;
 import static org.junit.Assert.*;
 
 import java.io.File;
+import java.io.IOException;
 import java.net.URI;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -33,52 +36,83 @@ import org.junit.Test;
  */
 public class TestQuorumJournalManager {
   private static final String JID = "testQuorumJournalManager";
+  private MiniJournalCluster cluster;
+  private Configuration conf;
 
-  @Test
-  public void testSingleWriter() throws Exception {
-    Configuration conf = new Configuration();
-    MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf)
+  @Before
+  public void setup() throws Exception {
+    conf = new Configuration();
+    cluster = new MiniJournalCluster.Builder(conf)
       .build();
     cluster.start();
-    try {
-      cluster.setupClientConfigs(conf);
-      QuorumJournalManager qjm = new QuorumJournalManager(conf,
-          new URI("qjournal://x/" + JID));
-      qjm.recoverUnfinalizedSegments();
-      EditLogOutputStream stm = qjm.startLogSegment(1);
-      // Should create in-progress
-      assertExistsInQuorum(cluster,
-          NNStorage.getInProgressEditsFileName(1));
-
-      assertEquals(1, qjm.getWriterEpoch());
-      TestQuorumJournalManagerUnit.writeOp(stm, 1);
-      TestQuorumJournalManagerUnit.writeOp(stm, 2);
-      TestQuorumJournalManagerUnit.writeOp(stm, 3);
-      stm.setReadyToFlush();
-      stm.flush();
-
-      stm.close();
-      qjm.finalizeLogSegment(1, 3);
-      
-      // Should be finalized
-      assertExistsInQuorum(cluster,
-          NNStorage.getFinalizedEditsFileName(1, 3));
-      
-      // Start a new segment
-      stm = qjm.startLogSegment(4);
-      assertExistsInQuorum(cluster,
-          NNStorage.getInProgressEditsFileName(4));
-      TestQuorumJournalManagerUnit.writeOp(stm, 4);
-      stm.setReadyToFlush();
-      stm.flush();
-
-      stm.close();
-      qjm.finalizeLogSegment(4, 4);
-    } finally {
-      cluster.shutdown();
-    }
+    cluster.setupClientConfigs(conf);
   }
   
+  @After
+  public void shutdown() throws IOException {
+    cluster.shutdown();
+  }
+  
+  @Test
+  public void testSingleWriter() throws Exception {
+    QuorumJournalManager qjm = new QuorumJournalManager(
+        conf, new URI("qjournal://x/" + JID));
+    qjm.recoverUnfinalizedSegments();
+    assertEquals(1, qjm.getWriterEpoch());
+
+    writeSegment(qjm, 1, 3, true);
+    
+    // Should be finalized
+    assertExistsInQuorum(cluster,
+        NNStorage.getFinalizedEditsFileName(1, 3));
+    
+    // Start a new segment
+    writeSegment(qjm, 4, 1, true);
+    assertExistsInQuorum(cluster,
+        NNStorage.getFinalizedEditsFileName(4, 4));
+  }
+  
+  /**
+   * Test case where a new writer picks up from an old one with no failures
+   * and the previous unfinalized segment entirely consistent -- i.e. all
+   * the JournalNodes end at the same transaction ID.
+   */
+  @Test
+  public void testChangeWritersLogsInSync() throws Exception {
+    QuorumJournalManager qjm = new QuorumJournalManager(
+        conf, new URI("qjournal://x/" + JID));
+    qjm.recoverUnfinalizedSegments();
+    writeSegment(qjm, 1, 3, false);
+    assertExistsInQuorum(cluster,
+        NNStorage.getInProgressEditsFileName(1));
+
+    // Make a new QJM
+    qjm = new QuorumJournalManager(
+        conf, new URI("qjournal://x/" + JID));
+    qjm.recoverUnfinalizedSegments();
+    assertExistsInQuorum(cluster,
+        NNStorage.getFinalizedEditsFileName(1, 3));
+  }
+  
+  private void writeSegment(QuorumJournalManager qjm,
+      int startTxId, int numTxns, boolean finalize) throws IOException {
+    
+    EditLogOutputStream stm = qjm.startLogSegment(startTxId);
+    // Should create in-progress
+    assertExistsInQuorum(cluster,
+        NNStorage.getInProgressEditsFileName(startTxId));
+
+    for (long txid = startTxId; txid < startTxId + numTxns; txid++) {
+      TestQuorumJournalManagerUnit.writeOp(stm, txid);
+    }
+    stm.setReadyToFlush();
+    stm.flush();
+    stm.close();
+    if (finalize) {
+      qjm.finalizeLogSegment(startTxId, startTxId + numTxns - 1);
+    }
+  }
+
   private void assertExistsInQuorum(MiniJournalCluster cluster,
       String fname) {
     int count = 0;
