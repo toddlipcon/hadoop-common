@@ -22,13 +22,19 @@ import static org.junit.Assert.*;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.List;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
+import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
+
+import com.google.common.collect.Lists;
 
 /**
  * Functional tests for QuorumJournalManager.
@@ -94,23 +100,91 @@ public class TestQuorumJournalManager {
         NNStorage.getFinalizedEditsFileName(1, 3));
   }
   
+  /**
+   * Test case where a new writer picks up from an old one which crashed
+   * with the three loggers at different txnids
+   */
+  @Test
+  public void testChangeWritersLogsOutOfSync() throws Exception {
+    QuorumJournalManager qjm = createSpyingQJM();
+    List<AsyncLogger> spies = qjm.getLoggerSetForTests().getLoggersForTests();
+
+    qjm.recoverUnfinalizedSegments();
+    EditLogOutputStream stm = qjm.startLogSegment(1);
+    
+    TestQuorumJournalManagerUnit.futureThrows(new IOException("mock failure"))
+      .when(spies.get(0)).sendEdits(
+          Mockito.eq(4L), Mockito.eq(1), Mockito.<byte[]>any());
+    TestQuorumJournalManagerUnit.futureThrows(new IOException("mock failure"))
+      .when(spies.get(1)).sendEdits(
+          Mockito.eq(5L), Mockito.eq(1), Mockito.<byte[]>any());
+
+    writeTxns(stm, 1, 3);
+    
+    // This should succeed to 2/3 loggers
+    writeTxns(stm, 4, 1);
+    
+    // This should only succeed to 1 logger (index 2). Hence it should
+    // fail
+    try {
+      writeTxns(stm, 5, 1);
+      fail("Did not fail to write when only a minority succeeded");
+    } catch (QuorumException qe) {
+      GenericTestUtils.assertExceptionContains(
+          "too many exceptions to achieve quorum size 2/3",
+          qe);
+    }
+    
+    assertExistsInQuorum(cluster,
+        NNStorage.getInProgressEditsFileName(1));
+
+    // Make a new QJM
+    qjm = new QuorumJournalManager(
+        conf, new URI("qjournal://x/" + JID));
+    qjm.recoverUnfinalizedSegments();
+    assertExistsInQuorum(cluster,
+        NNStorage.getFinalizedEditsFileName(1, 5));
+  }
+  
+  
+  private QuorumJournalManager createSpyingQJM()
+      throws IOException, URISyntaxException {
+    return new QuorumJournalManager(
+        conf, new URI("qjournal://x/" + JID)) {
+          @Override
+          protected List<AsyncLogger> createLoggers() throws IOException {
+            LOG.info("===> make spies");
+            List<AsyncLogger> realLoggers = super.createLoggers();
+            List<AsyncLogger> spies = Lists.newArrayList();
+            for (AsyncLogger logger : realLoggers) {
+              spies.add(Mockito.spy(logger));
+            }
+            return spies;
+          }
+    };
+  }
+
   private void writeSegment(QuorumJournalManager qjm,
       int startTxId, int numTxns, boolean finalize) throws IOException {
-    
     EditLogOutputStream stm = qjm.startLogSegment(startTxId);
     // Should create in-progress
     assertExistsInQuorum(cluster,
         NNStorage.getInProgressEditsFileName(startTxId));
+    
+    writeTxns(stm, startTxId, numTxns);
+    if (finalize) {
+      stm.close();
+      qjm.finalizeLogSegment(startTxId, startTxId + numTxns - 1);
+    }
+  }
 
+  private void writeTxns(EditLogOutputStream stm, int startTxId, int numTxns)
+      throws IOException {
     for (long txid = startTxId; txid < startTxId + numTxns; txid++) {
       TestQuorumJournalManagerUnit.writeOp(stm, txid);
     }
     stm.setReadyToFlush();
     stm.flush();
-    stm.close();
-    if (finalize) {
-      qjm.finalizeLogSegment(startTxId, startTxId + numTxns - 1);
-    }
   }
 
   private void assertExistsInQuorum(MiniJournalCluster cluster,

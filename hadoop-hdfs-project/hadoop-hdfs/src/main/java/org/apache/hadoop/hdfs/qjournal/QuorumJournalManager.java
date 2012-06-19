@@ -48,6 +48,7 @@ import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.net.NetUtils;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
@@ -124,7 +125,8 @@ public class QuorumJournalManager implements JournalManager {
     for (Entry<AsyncLogger, NewEpochResponseProto> resp : resps.entrySet()) {
       if (RecoveryComparator.INSTANCE.compare(resp, newestLogger) < 0) {
         LOG.info("Older logger needs sync: " + resp);
-        throw new UnsupportedOperationException("TODO");
+        throw new UnsupportedOperationException(
+            "TODO: Older logger needs sync: " + resp);
       }
     }
     
@@ -313,6 +315,11 @@ public class QuorumJournalManager implements JournalManager {
   @Override
   public String toString() {
     return "Quorum journal manager " + uri;
+  }
+
+  @VisibleForTesting
+  AsyncLoggerSet getLoggerSetForTests() {
+    return loggers;
   }
 
 }

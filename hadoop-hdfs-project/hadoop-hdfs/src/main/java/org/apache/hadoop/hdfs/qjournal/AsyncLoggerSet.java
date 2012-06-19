@@ -32,6 +32,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochR
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
@@ -279,6 +280,15 @@ class AsyncLoggerSet {
   
   int size() {
     return loggers.size();
+  }
+
+  /**
+   * @return the (mutable) list of loggers, for use in tests to
+   * set up spies
+   */
+  @VisibleForTesting
+  List<AsyncLogger> getLoggersForTests() {
+    return loggers;
   }
 
 }

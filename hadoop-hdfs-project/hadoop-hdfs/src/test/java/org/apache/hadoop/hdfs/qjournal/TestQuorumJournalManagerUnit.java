@@ -91,12 +91,12 @@ public class TestQuorumJournalManagerUnit {
     return Mockito.mock(AsyncLogger.class);
   }
   
-  private static <V> Stubber futureReturns(V value) {
+  static <V> Stubber futureReturns(V value) {
     ListenableFuture<V> ret = Futures.immediateFuture(value);
     return Mockito.doReturn(ret);
   }
   
-  private static Stubber futureThrows(Throwable t) {
+  static Stubber futureThrows(Throwable t) {
     ListenableFuture<?> ret = Futures.immediateFailedFuture(t);
     return Mockito.doReturn(ret);
   }
