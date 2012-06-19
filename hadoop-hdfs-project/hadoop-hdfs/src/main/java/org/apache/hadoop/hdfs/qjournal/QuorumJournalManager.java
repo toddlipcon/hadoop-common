@@ -52,6 +52,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Lists;
+import com.google.common.primitives.Longs;
 
 /**
  * A JournalManager that writes to a set of remote JournalNodes,
@@ -117,6 +118,9 @@ public class QuorumJournalManager implements JournalManager {
         resps.entrySet(), RecoveryComparator.INSTANCE);
     
     LOG.info("Newest logger: " + newestLogger);
+    
+    // Step 1: synchronize any lagging loggers to the newest one.
+    // TODO: implement this!
     for (Entry<AsyncLogger, NewEpochResponseProto> resp : resps.entrySet()) {
       if (RecoveryComparator.INSTANCE.compare(resp, newestLogger) < 0) {
         LOG.info("Older logger needs sync: " + resp);
@@ -124,6 +128,37 @@ public class QuorumJournalManager implements JournalManager {
       }
     }
     
+    // TODO: there are probably a number of sanity-checks we can run
+    // against invariants here
+    if (newestLogger.getValue().hasLastSegment()) {
+      long recoveryStartTxnId = newestLogger.getValue().getLastSegment().getStartTxId();
+      long recoveryEndTxnId = newestLogger.getValue().getLastSegment().getEndTxId();
+      
+      Preconditions.checkState(recoveryStartTxnId > 0 && recoveryEndTxnId > 0 &&
+          recoveryEndTxnId >= recoveryStartTxnId, "bad newest logger: %s",
+          newestLogger);
+    
+      
+      // Step 2: Run Paxos to ensure that if we fail mid-recovery any future
+      // writers will recover to the same length
+      
+      byte[] consensusLengthBytes =
+          loggers.runPaxosConsensus("segment-" + recoveryStartTxnId,
+          Longs.toByteArray(recoveryEndTxnId));
+      long consensusLength = Longs.fromByteArray(consensusLengthBytes);
+      
+      LOG.info("Consensus length for segment " + recoveryStartTxnId + ": " + consensusLength);
+
+      // TODO: think carefully about this 
+      Preconditions.checkState(consensusLength <= recoveryEndTxnId,
+          "Consensus decided edit length %s but we synchronized to a shorter length %s",
+          consensusLength, recoveryEndTxnId);
+      
+      
+      QuorumCall<AsyncLogger, Void> finalize =
+          loggers.finalizeLogSegment(recoveryStartTxnId, recoveryEndTxnId);
+      loggers.waitForWriteQuorum(finalize, 20000); // TODO: timeout configurable
+    }
     isActiveWriter = true;
   }
   
@@ -141,6 +176,7 @@ public class QuorumJournalManager implements JournalManager {
       NewEpochResponseProto r2 = b.getValue();
       
       return ComparisonChain.start()
+          .compare(r1.hasLastSegment(), r2.hasLastSegment())
           .compare(r1.getCurrentEpoch(), r2.getCurrentEpoch())
           .compare(r1.getLastSegment().getEndTxId(),
                    r2.getLastSegment().getEndTxId())

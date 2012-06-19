@@ -1,10 +1,8 @@
 package org.apache.hadoop.hdfs.qjournal;
 
-import java.io.BufferedWriter;
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
@@ -12,14 +10,12 @@ import java.io.OutputStreamWriter;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
-import org.apache.hadoop.hdfs.protocolPB.PBHelper;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.LogSegmentProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogsRequestProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
@@ -29,7 +25,6 @@ import org.apache.hadoop.hdfs.util.AtomicFileOutputStream;
 import org.apache.hadoop.io.IOUtils;
 
 import com.google.common.base.Preconditions;
-import com.google.common.io.Files;
 import com.google.protobuf.ByteString;
 
 public class Journal implements Closeable {
@@ -104,13 +99,19 @@ public class Journal implements Closeable {
       curSegment.close();
       curSegment = null;
     }
-    return NewEpochResponseProto.newBuilder()
-      .setLastSegment(LogSegmentProto.newBuilder()
+    
+    NewEpochResponseProto.Builder builder =
+        NewEpochResponseProto.newBuilder()
+        .setCurrentEpoch(lastAcceptedEpoch.get());
+        
+    if (curSegmentTxId != HdfsConstants.INVALID_TXID) {
+      builder.setLastSegment(LogSegmentProto.newBuilder()
           .setStartTxId(curSegmentTxId)
           .setEndTxId(nextTxId - 1)
-          .setIsInProgress(!curSegmentFinalized))
-          .setCurrentEpoch(lastAcceptedEpoch.get())
-      .build();
+          .setIsInProgress(!curSegmentFinalized));
+    }
+    
+    return builder.build();
   }
 
 
@@ -208,7 +209,8 @@ public class Journal implements Closeable {
       throws IOException {
     checkRequest(reqInfo);
     PaxosPrepareResponseProto ret = getPersistedPaxosData(decisionId);
-    LOG.info("Prepared paxos for decision " + decisionId + ": " + ret);
+    LOG.info("Prepared paxos for decision '" + decisionId + "': " +
+        (ret.hasAcceptedEpoch() ? ret : "no previous value accepted"));
     return ret;
   }
 
@@ -271,7 +273,7 @@ public class Journal implements Closeable {
     }
     
     persistPaxosData(decisionId, newData);
-    LOG.info("Persisted new paxos data for decision " + decisionId + ": " + newData);
+    LOG.info("Accepted value for paxos decision '" + decisionId + "': " + newData);
   }
 
 }
