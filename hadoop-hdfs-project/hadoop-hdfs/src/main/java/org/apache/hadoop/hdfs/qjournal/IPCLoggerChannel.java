@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URL;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
@@ -31,6 +32,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolTranslatorPB;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
 
@@ -92,21 +94,12 @@ class IPCLoggerChannel implements AsyncLogger {
         addr, conf);
     return new QJournalProtocolTranslatorPB(pbproxy);
   }
-
-  /* TODO killme
-  private JournalSyncProtocol getSyncProxy() throws IOException {
-    if (syncProxy != null) return syncProxy;
-
-    RPC.setProtocolEngine(conf,
-        JournalSyncProtocolPB.class, ProtobufRpcEngine.class);
-    JournalSyncProtocolPB pbproxy = RPC.getProxy(
-        JournalSyncProtocolPB.class,
-        RPC.getProtocolVersion(JournalSyncProtocolPB.class),
-        addr, conf);
-    return new JournalSyncProtocolTranslatorPB(pbproxy);
-  }
-*/
   
+  @Override
+  public String getHostNameForHttpFetch() {
+    return addr.getHostName();
+  }
+
   private RequestInfo createReqInfo() {
     Preconditions.checkState(epoch > 0, "bad epoch: " + epoch);
     return new RequestInfo(journalId, epoch, ipcSerial++);
@@ -188,6 +181,5 @@ class IPCLoggerChannel implements AsyncLogger {
   public String toString() {
     return "Channel to journal node " + addr; 
   }
-
 
 }

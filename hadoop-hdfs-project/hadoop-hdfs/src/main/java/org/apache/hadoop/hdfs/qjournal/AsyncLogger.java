@@ -41,4 +41,9 @@ interface AsyncLogger {
       long fromTxnId);
 
   public void setEpoch(long e);
+
+  /**
+   * TODO: this kind of breaks the abstraction :(
+   */
+  public String getHostNameForHttpFetch();
 }

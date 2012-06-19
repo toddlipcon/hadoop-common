@@ -172,7 +172,7 @@ public class TestJournalNode {
     // Attempt to retrieve via HTTP, ensure we get the data back
     // including the header we expected
     byte[] retrievedViaHttp = DFSTestUtil.urlGetBytes(new URL(urlRoot +
-        "/getimage?getedit=1&startTxId=1&endTxId=3&jid=" + JID));
+        "/getimage?startTxId=1&endTxId=3&jid=" + JID));
     byte[] expected = Bytes.concat(
             Ints.toByteArray(HdfsConstants.LAYOUT_VERSION),
             EDITS_DATA);

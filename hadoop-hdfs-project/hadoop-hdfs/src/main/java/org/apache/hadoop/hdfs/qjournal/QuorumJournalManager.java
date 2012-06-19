@@ -19,24 +19,33 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
 import java.net.URI;
+import java.net.URL;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Map.Entry;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.server.namenode.EditLogFileInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.JournalManager;
+import org.apache.hadoop.hdfs.server.namenode.JournalSet;
+import org.apache.hadoop.hdfs.server.namenode.LocalOrRemoteEditLog;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
+import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.net.NetUtils;
 
 import com.google.common.base.Joiner;
@@ -229,6 +238,40 @@ public class QuorumJournalManager implements JournalManager {
     LOG.info("selectInputStream manifests:\n" +
         Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
     
+    final PriorityQueue<EditLogInputStream> allStreams = 
+        new PriorityQueue<EditLogInputStream>(64,
+            JournalSet.EDIT_LOG_INPUT_STREAM_COMPARATOR);
+    for (Map.Entry<AsyncLogger, GetEditLogManifestResponseProto> e : resps.entrySet()) {
+      AsyncLogger logger = e.getKey();
+      GetEditLogManifestResponseProto response = e.getValue();
+      RemoteEditLogManifest manifest = PBHelper.convert(response.getManifest());
+      
+      for (RemoteEditLog remoteLog : manifest.getLogs()) {
+        URL url;
+        try {
+          url = new URL("http",
+              logger.getHostNameForHttpFetch(),
+              response.getHttpPort(),
+              String.format("/getimage?startTxId=%d&endTxId=%d&jid=%s",
+                  remoteLog.getStartTxId(),
+                  remoteLog.getEndTxId(),
+                  journalId));
+        } catch (MalformedURLException e1) {
+          // should never get here
+          throw new RuntimeException(e1);
+        }
+        // TODO: refactor above mess out
+        LOG.info("URL: " + url);
+                        
+        EditLogInputStream elis = new EditLogFileInputStream(
+            new LocalOrRemoteEditLog.URLLog(url),
+            remoteLog.getStartTxId(), remoteLog.getEndTxId(),
+            false); // TODO inprogress
+        allStreams.add(elis);
+      }
+    }
+    JournalSet.chainAndMakeRedundantStreams(
+        streams, allStreams, fromTxnId, inProgressOk);
   }
   
   @Override
