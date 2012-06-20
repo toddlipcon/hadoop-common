@@ -41,8 +41,7 @@ public class TestNNWithQJM {
     conf.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
         MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image");
     conf.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
-        "qjournal://localhost/myjournal");
-    mjc.setupClientConfigs(conf);
+        mjc.getQuorumJournalURI("myjournal").toString());
     
     MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
       .numDataNodes(0)
@@ -72,8 +71,7 @@ public class TestNNWithQJM {
     conf.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
         MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn1");
     conf.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
-        "qjournal://localhost/myjournal");
-    mjc.setupClientConfigs(conf);
+        mjc.getQuorumJournalURI("myjournal").toString());
     
     MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
       .numDataNodes(0)
@@ -91,8 +89,7 @@ public class TestNNWithQJM {
       conf2.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
           MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn2");
       conf2.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
-          "qjournal://localhost/myjournal");
-      mjc.setupClientConfigs(conf2);
+          mjc.getQuorumJournalURI("myjournal").toString());
       MiniDFSCluster cluster2 = new MiniDFSCluster.Builder(conf2)
         .numDataNodes(0)
         .manageNameDfsDirs(false)

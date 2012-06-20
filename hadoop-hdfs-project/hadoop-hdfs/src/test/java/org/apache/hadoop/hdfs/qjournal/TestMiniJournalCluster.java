@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.qjournal;
 import static org.junit.Assert.*;
 
 import java.io.IOException;
+import java.net.URI;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
@@ -34,9 +35,8 @@ public class TestMiniJournalCluster {
       .build();
     try {
       c.start();
-      c.setupClientConfigs(conf);
-      String[] addrs = conf.getStrings(
-          QuorumJournalManager.LOGGER_ADDRESSES_KEY);
+      URI uri = c.getQuorumJournalURI("myjournal");
+      String[] addrs = uri.getAuthority().split(";");
       assertEquals(3, addrs.length);
       
       JournalNode node = c.getJournalNode(0);

@@ -20,6 +20,8 @@ package org.apache.hadoop.hdfs.qjournal;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 
 import org.apache.commons.logging.Log;
@@ -29,7 +31,6 @@ import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 
 import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 
 public class MiniJournalCluster {
@@ -66,6 +67,7 @@ public class MiniJournalCluster {
   private static final Log LOG = LogFactory.getLog(MiniJournalCluster.class);
   private File baseDir;
   private JournalNode nodes[];
+  private InetSocketAddress ipcAddrs[];
   
   private MiniJournalCluster(Builder b) throws IOException {
     LOG.info("Starting MiniJournalCluster with " +
@@ -78,6 +80,7 @@ public class MiniJournalCluster {
     }
     
     nodes = new JournalNode[b.numJournalNodes];
+    ipcAddrs = new InetSocketAddress[b.numJournalNodes];
     for (int i = 0; i < b.numJournalNodes; i++) {
       if (b.format) {
         File dir = getStorageDir(i);
@@ -87,6 +90,7 @@ public class MiniJournalCluster {
       nodes[i] = new JournalNode();
       nodes[i].setConf(createConfForNode(b, i));
       nodes[i].start();
+      ipcAddrs[i] = nodes[i].getBoundIpcAddress();
     }
   }
 
@@ -94,17 +98,18 @@ public class MiniJournalCluster {
    * Set up the given Configuration object to point to the set of JournalNodes 
    * in this cluster.
    */
-  public void setupClientConfigs(Configuration conf) {
+  public URI getQuorumJournalURI(String jid) {
     List<String> addrs = Lists.newArrayList();
-    for (JournalNode jn : nodes) {
-      Preconditions.checkState(jn.isStarted(), "Cluster not yet started");
-      InetSocketAddress addr = jn.getBoundIpcAddress();
-      assert addr.getPort() != 0;
+    for (InetSocketAddress addr : ipcAddrs) {
       addrs.add("127.0.0.1:" + addr.getPort());
     }
-    String addrsVal = Joiner.on(",").join(addrs);
+    String addrsVal = Joiner.on(";").join(addrs);
     LOG.debug("Setting logger addresses to: " + addrsVal);
-    conf.set(QuorumJournalManager.LOGGER_ADDRESSES_KEY, addrsVal);
+    try {
+      return new URI("qjournal://" + addrsVal + "/" + jid);
+    } catch (URISyntaxException e) {
+      throw new AssertionError(e);
+    }
   }
 
   /**
@@ -161,4 +166,5 @@ public class MiniJournalCluster {
   public int getQuorumSize() {
     return nodes.length / 2 + 1;
   }
+
 }

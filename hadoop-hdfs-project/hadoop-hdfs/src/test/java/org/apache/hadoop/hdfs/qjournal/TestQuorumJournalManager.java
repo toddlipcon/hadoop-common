@@ -51,7 +51,6 @@ public class TestQuorumJournalManager {
     cluster = new MiniJournalCluster.Builder(conf)
       .build();
     cluster.start();
-    cluster.setupClientConfigs(conf);
   }
   
   @After
@@ -62,7 +61,7 @@ public class TestQuorumJournalManager {
   @Test
   public void testSingleWriter() throws Exception {
     QuorumJournalManager qjm = new QuorumJournalManager(
-        conf, new URI("qjournal://x/" + JID));
+        conf, cluster.getQuorumJournalURI(JID));
     qjm.recoverUnfinalizedSegments();
     assertEquals(1, qjm.getWriterEpoch());
 
@@ -86,7 +85,7 @@ public class TestQuorumJournalManager {
   @Test
   public void testChangeWritersLogsInSync() throws Exception {
     QuorumJournalManager qjm = new QuorumJournalManager(
-        conf, new URI("qjournal://x/" + JID));
+        conf, cluster.getQuorumJournalURI(JID));
     qjm.recoverUnfinalizedSegments();
     writeSegment(qjm, 1, 3, false);
     assertExistsInQuorum(cluster,
@@ -94,7 +93,7 @@ public class TestQuorumJournalManager {
 
     // Make a new QJM
     qjm = new QuorumJournalManager(
-        conf, new URI("qjournal://x/" + JID));
+        conf, cluster.getQuorumJournalURI(JID));
     qjm.recoverUnfinalizedSegments();
     assertExistsInQuorum(cluster,
         NNStorage.getFinalizedEditsFileName(1, 3));
@@ -178,7 +177,7 @@ public class TestQuorumJournalManager {
   private QuorumJournalManager createSpyingQJM()
       throws IOException, URISyntaxException {
     return new QuorumJournalManager(
-        conf, new URI("qjournal://x/" + JID)) {
+        conf, cluster.getQuorumJournalURI(JID)) {
           @Override
           protected List<AsyncLogger> createLoggers() throws IOException {
             LOG.info("===> make spies");

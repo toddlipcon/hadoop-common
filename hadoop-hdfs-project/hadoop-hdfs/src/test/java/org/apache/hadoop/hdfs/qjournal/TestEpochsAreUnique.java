@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.qjournal;
 import static org.junit.Assert.*;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.List;
 import java.util.Random;
 
@@ -49,13 +50,12 @@ public class TestEpochsAreUnique {
     Configuration conf = new Configuration();
     MiniJournalCluster cluster = new MiniJournalCluster.Builder(conf).build();
     cluster.start();
+    URI uri = cluster.getQuorumJournalURI(JID);
     try {
-      cluster.setupClientConfigs(conf);
-      
       // With no failures or contention, epochs should increase one-by-one
       for (int i = 0; i < 5; i++) {
         AsyncLoggerSet als = new AsyncLoggerSet(
-            QuorumJournalManager.createLoggers(conf, JID));
+            QuorumJournalManager.createLoggers(conf, uri, JID));
         als.createNewUniqueEpoch(FAKE_NSINFO);
         assertEquals(i + 1, als.getEpoch());
       }
@@ -65,7 +65,7 @@ public class TestEpochsAreUnique {
       // skipping some
       for (int i = 0; i < 20; i++) {
         AsyncLoggerSet als = new AsyncLoggerSet(
-            makeFaulty(QuorumJournalManager.createLoggers(conf, JID)));
+            makeFaulty(QuorumJournalManager.createLoggers(conf, uri, JID)));
         long newEpoch = -1;
         while (true) {
           try {

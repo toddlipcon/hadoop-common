@@ -41,7 +41,6 @@ import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
-import org.apache.hadoop.hdfs.server.common.Storage;
 import org.apache.hadoop.hdfs.server.namenode.EditLogFileInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
@@ -53,6 +52,7 @@ import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.util.StringUtils;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
@@ -69,10 +69,6 @@ import com.google.common.primitives.Longs;
 @InterfaceAudience.Private
 public class QuorumJournalManager implements JournalManager {
   static final Log LOG = LogFactory.getLog(QuorumJournalManager.class);
-
-  static final String LOGGER_ADDRESSES_KEY =
-    "dfs.namenode.quorum-logger.logger-addresess";
-
 
   private static final int START_SEGMENT_TIMEOUT_MS = 20000;
 
@@ -233,29 +229,39 @@ public class QuorumJournalManager implements JournalManager {
   }
 
   protected List<AsyncLogger> createLoggers() throws IOException {
-    return createLoggers(conf, journalId);
+    return createLoggers(conf, uri, journalId);
   }
   
   static List<AsyncLogger> createLoggers(Configuration conf,
-      String journalId) throws IOException {
+      URI uri, String journalId) throws IOException {
     List<AsyncLogger> ret = Lists.newArrayList();
-    List<InetSocketAddress> addrs = getLoggerAddresses(conf);
+    List<InetSocketAddress> addrs = getLoggerAddresses(uri);
     for (InetSocketAddress addr : addrs) {
       ret.add(new IPCLoggerChannel(conf, journalId, addr));
     }
     return ret;
   }
  
-  private static List<InetSocketAddress> getLoggerAddresses(Configuration conf)
+  private static List<InetSocketAddress> getLoggerAddresses(URI uri)
       throws IOException {
-    String[] addrStrings = conf.getTrimmedStrings(LOGGER_ADDRESSES_KEY);
-    if (addrStrings == null) {
-      throw new IOException("No loggers configured in " + LOGGER_ADDRESSES_KEY);
+    String authority = uri.getAuthority();
+    Preconditions.checkArgument(authority != null && !authority.isEmpty(),
+        "URI has no authority: " + uri);
+    
+    String[] parts = StringUtils.split(authority, ';');
+    for (int i = 0; i < parts.length; i++) {
+      parts[i] = parts[i].trim();
     }
+
+    if (parts.length % 2 == 0) {
+      LOG.warn("Quorum journal URI '" + uri + "' has an even number " +
+          "of Journal Nodes specified. This is not recommended!");
+    }
+    
     List<InetSocketAddress> addrs = Lists.newArrayList();
-    for (String addr : addrStrings) {
+    for (String addr : parts) {
       addrs.add(NetUtils.createSocketAddr(
-          addr, JournalNodeRpcServer.DEFAULT_PORT, LOGGER_ADDRESSES_KEY));
+          addr, JournalNodeRpcServer.DEFAULT_PORT));
     }
     return addrs;
   }
