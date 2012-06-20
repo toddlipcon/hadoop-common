@@ -28,6 +28,7 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.server.common.Storage.StorageDirectory;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.io.IOUtils;
@@ -58,7 +59,10 @@ public class JournalNode implements Tool, Configurable {
   private JournalNodeRpcServer rpcServer;
   private JournalNodeHttpServer httpServer;
   private Map<String, Journal> journalsById = Maps.newHashMap();
-  
+
+  static {
+    HdfsConfiguration.init();
+  }
   
   /**
    * When stopped, the daemon will exit with this code. 
