@@ -24,13 +24,16 @@ import java.net.InetSocketAddress;
 import java.net.URL;
 import java.util.concurrent.ExecutionException;
 
+import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
+import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -54,6 +57,11 @@ public class TestJournalNode {
   private Configuration conf = new Configuration();
   private IPCLoggerChannel ch;
 
+  static {
+    // Avoid an error when we double-initialize JvmMetrics
+    DefaultMetricsSystem.setMiniClusterMode(true);
+  }
+  
   @Before
   public void setup() throws Exception {
     conf.set(JournalNodeRpcServer.DFS_JOURNALNODE_RPC_ADDRESS_KEY,
@@ -178,7 +186,8 @@ public class TestJournalNode {
     // Attempt to retrieve via HTTP, ensure we get the data back
     // including the header we expected
     byte[] retrievedViaHttp = DFSTestUtil.urlGetBytes(new URL(urlRoot +
-        "/getimage?startTxId=1&endTxId=3&jid=" + JID));
+        "/getimage?filename=" + NNStorage.getFinalizedEditsFileName(1, 3) +
+        "&jid=" + JID));
     byte[] expected = Bytes.concat(
             Ints.toByteArray(HdfsConstants.LAYOUT_VERSION),
             EDITS_DATA);
