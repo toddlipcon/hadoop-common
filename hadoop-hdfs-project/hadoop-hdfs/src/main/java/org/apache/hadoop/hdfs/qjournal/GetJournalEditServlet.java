@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
@@ -34,7 +35,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.server.common.JspHelper;
 import org.apache.hadoop.hdfs.server.namenode.GetImageServlet;
-import org.apache.hadoop.hdfs.server.namenode.GetImageServlet.GetImageParams;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.TransferFsImage;
 import org.apache.hadoop.hdfs.util.DataTransferThrottler;
@@ -53,10 +53,9 @@ public class GetJournalEditServlet extends HttpServlet {
   private static final long serialVersionUID = -4635891628211723009L;
   private static final Log LOG = LogFactory.getLog(GetJournalEditServlet.class);
 
-  private static final String START_TXID_PARAM = "startTxId";
-  private static final String END_TXID_PARAM = "endTxId";
-  private static final String JOURNAL_ID_PARAM = "jid";
   private static final String STORAGEINFO_PARAM = "storageInfo";
+  private static final String FILENAME_PARAM = "filename";
+  private static final String JOURNAL_ID_PARAM = "jid";
 
 
   // TODO: create security tests
@@ -131,9 +130,10 @@ public class GetJournalEditServlet extends HttpServlet {
       final ServletContext context = getServletContext();
       final Configuration conf = (Configuration) getServletContext()
           .getAttribute(JspHelper.CURRENT_CONF);
-      final Params parsedParams = new Params(request);
+      final String journalId = request.getParameter(JOURNAL_ID_PARAM);
+      QuorumJournalManager.checkJournalId(journalId);
       final JNStorage storage = JournalNodeHttpServer
-          .getJournalFromContext(context, parsedParams.getJournalId()).getStorage();
+          .getJournalFromContext(context, journalId).getStorage();
 
       // Check security
       if (!checkRequestorOrSendError(conf, request, response)) {
@@ -145,11 +145,10 @@ public class GetJournalEditServlet extends HttpServlet {
         return;
       }
 
-      long startTxId = parsedParams.getStartTxId();
-      long endTxId = parsedParams.getEndTxId();
-
-      File editFile = storage.findFinalizedEditsFile(startTxId,
-          endTxId);
+      String filename = getFileNameParam(request);
+      List<File> editFiles = storage.getFiles(null, filename);
+      assert editFiles.size() == 1;
+      File editFile = editFiles.get(0);
 
       GetImageServlet.setVerificationHeaders(response, editFile);
       GetImageServlet.setFileNameHeaders(response, editFile);
@@ -173,26 +172,16 @@ public class GetJournalEditServlet extends HttpServlet {
     }
   }
 
-  private static class Params {
-    private final long startTxId;
-    private final long endTxId;
-    private final String journalId;
-    
-    Params(HttpServletRequest req) throws IOException {
-      startTxId = GetImageParams.parseLongParam(req, START_TXID_PARAM);
-      endTxId = GetImageParams.parseLongParam(req, END_TXID_PARAM);
-      journalId = req.getParameter(JOURNAL_ID_PARAM);
+  private String getFileNameParam(HttpServletRequest request) {
+    String ret = request.getParameter(FILENAME_PARAM);
+    if (ret == null) {
+      throw new IllegalArgumentException(
+          "No filename parameter passed");
     }
-    
-    long getStartTxId() {
-      return startTxId;
+    if (ret.isEmpty() || ret.contains("/")) {
+      throw new IllegalArgumentException("illegal filename: " + ret);
     }
-    long getEndTxId() {
-      return endTxId;
-    }
-    String getJournalId() {
-      return journalId;
-    }
+    return ret;
   }
   
   /**

@@ -18,14 +18,15 @@
 package org.apache.hadoop.hdfs.qjournal.protocol;
 
 import java.io.IOException;
+import java.net.URL;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.security.KerberosInfo;
 
@@ -75,8 +76,9 @@ public interface QJournalProtocol {
   public void finalizeLogSegment(RequestInfo reqInfo,
       long startTxId, long endTxId) throws IOException;
   
-  public void syncLog(SyncLogRequestProto req) throws IOException;
-  
+  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment, URL url)
+      throws IOException;
+
   GetEditLogManifestResponseProto getEditLogManifest(
       String jid, long sinceTxId) throws IOException;
   
@@ -84,4 +86,5 @@ public interface QJournalProtocol {
       String decisionId) throws IOException;
   public void paxosAccept(RequestInfo reqInfo,
       String decisionId, byte[] value) throws IOException;
+
 }

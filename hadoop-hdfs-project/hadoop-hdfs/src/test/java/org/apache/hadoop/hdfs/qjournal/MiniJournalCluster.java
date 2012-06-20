@@ -157,4 +157,8 @@ public class MiniJournalCluster {
   public JournalNode getJournalNode(int i) {
     return nodes[i];
   }
+
+  public int getQuorumSize() {
+    return nodes.length / 2 + 1;
+  }
 }

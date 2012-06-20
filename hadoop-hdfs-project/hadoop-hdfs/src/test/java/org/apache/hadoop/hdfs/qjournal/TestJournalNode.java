@@ -87,17 +87,16 @@ public class TestJournalNode {
   @Test
   public void testEpochHandling() throws Exception {
     assertEquals(0, journal.getLastPromisedEpoch());
-    journal.newEpoch(FAKE_NSINFO, 1);
+    NewEpochResponseProto.Builder newEpoch =
+        journal.newEpoch(FAKE_NSINFO, 1);
+    assertFalse(newEpoch.hasLastSegment());
     assertEquals(1, journal.getLastPromisedEpoch());
     journal.newEpoch(FAKE_NSINFO, 3);
+    assertFalse(newEpoch.hasLastSegment());
     assertEquals(3, journal.getLastPromisedEpoch());
     try {
-      NewEpochResponseProto newEpoch = journal.newEpoch(
+      journal.newEpoch(
           FAKE_NSINFO, 3);
-      // TODO: maybe this should be returning a different value
-      // to indicate no segment?
-      assertEquals(HdfsConstants.INVALID_TXID,
-          newEpoch.getLastSegment().getStartTxId());
       fail("Should have failed to promise same epoch twice");
     } catch (IOException ioe) {
       // expected
@@ -241,6 +240,11 @@ public class TestJournalNode {
           "epoch 1 is less than the last promised epoch 2",
           ioe);
     }
+  }
+  
+  @Test
+  public void testSyncLog() throws Exception {
+    // TODO ch.syncLog(1, new URL("http://google.com/")).get();
   }
   
   // TODO:

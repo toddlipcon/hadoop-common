@@ -105,7 +105,32 @@ public class TestQuorumJournalManager {
    * with the three loggers at different txnids
    */
   @Test
-  public void testChangeWritersLogsOutOfSync() throws Exception {
+  public void testChangeWritersLogsOutOfSync1() throws Exception {
+    // Journal states:  [3, 4, 5]
+    // During recovery: [x, 4, 5]
+    // Should recovery to txn 5
+    doOutOfSyncTest(0, 5L);
+  }
+
+  @Test
+  public void testChangeWritersLogsOutOfSync2() throws Exception {
+    // Journal states:  [3, 4, 5]
+    // During recovery: [3, x, 5]
+    // Should recovery to txn 5
+    doOutOfSyncTest(1, 5L);
+  }
+
+  @Test
+  public void testChangeWritersLogsOutOfSync3() throws Exception {
+    // Journal states:  [3, 4, 5]
+    // During recovery: [3, 4, x]
+    // Should recovery to txn 4
+    doOutOfSyncTest(2, 4L);
+  }
+
+  
+  private void doOutOfSyncTest(int missingOnRecoveryIdx,
+      long expectedRecoveryTxnId) throws Exception {
     QuorumJournalManager qjm = createSpyingQJM();
     List<AsyncLogger> spies = qjm.getLoggerSetForTests().getLoggersForTests();
 
@@ -138,12 +163,15 @@ public class TestQuorumJournalManager {
     assertExistsInQuorum(cluster,
         NNStorage.getInProgressEditsFileName(1));
 
+    // Shut down the specified JN, so it's not present during recovery.
+    cluster.getJournalNode(missingOnRecoveryIdx).stop(0);
+
     // Make a new QJM
-    qjm = new QuorumJournalManager(
-        conf, new URI("qjournal://x/" + JID));
+    qjm = createSpyingQJM();
+    
     qjm.recoverUnfinalizedSegments();
     assertExistsInQuorum(cluster,
-        NNStorage.getFinalizedEditsFileName(1, 5));
+        NNStorage.getFinalizedEditsFileName(1, expectedRecoveryTxnId));
   }
   
   
@@ -197,6 +225,6 @@ public class TestQuorumJournalManager {
       }
     }
     assertTrue("File " + fname + " should exist in a quorum of dirs",
-        count > 2);
+        count >= cluster.getQuorumSize());
   }
 }

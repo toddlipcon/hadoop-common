@@ -33,11 +33,6 @@ message RequestInfoProto {
   required uint64 ipcSerialNumber = 3;
 }
 
-message LogSegmentProto {
-  required uint64 startTxId = 1;
-  required uint64 endTxId = 2;
-  required bool isInProgress = 3;
-}
 
 /**
  * TODO
@@ -106,8 +101,9 @@ message NewEpochRequestProto {
 }
 
 message NewEpochResponseProto {
-  optional LogSegmentProto lastSegment = 1;
+  optional RemoteEditLogProto lastSegment = 1;
   required uint64 currentEpoch = 2;
+  required uint32 httpPort = 3;
 }
 
 /**
@@ -136,7 +132,7 @@ message GetEditLogManifestResponseProto {
  */
 message SyncLogRequestProto {
   required RequestInfoProto reqInfo = 1;
-  required uint64 segmentStartTxId = 2;
+  required RemoteEditLogProto logSegment = 2;
   required string fromURL= 3;
 }
 

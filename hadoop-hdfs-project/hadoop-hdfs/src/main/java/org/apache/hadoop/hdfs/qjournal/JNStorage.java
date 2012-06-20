@@ -43,7 +43,12 @@ class JNStorage extends Storage {
     }
     return ret;
   }
-  
+
+  public File getInProgressEditLog(long startTxId) {
+    return new File(sd.getCurrentDir(),
+        NNStorage.getInProgressEditsFileName(startTxId));
+  }
+
   File getPaxosFile(String decisionId) {
     // TODO: sanity-check decisionId
     return new File(getPaxosDir(), decisionId);

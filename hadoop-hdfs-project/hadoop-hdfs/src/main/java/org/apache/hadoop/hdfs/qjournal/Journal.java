@@ -6,19 +6,21 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
+import java.net.URL;
+import java.util.List;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.LogSegmentProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
+import org.apache.hadoop.hdfs.server.namenode.TransferFsImage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
 import org.apache.hadoop.hdfs.util.AtomicFileOutputStream;
@@ -81,7 +83,7 @@ public class Journal implements Closeable {
     return lastPromisedEpoch.get();
   }
 
-  public synchronized NewEpochResponseProto newEpoch(
+  public synchronized NewEpochResponseProto.Builder newEpoch(
       NamespaceInfo nsInfo, long epoch)
       throws IOException {
 
@@ -102,16 +104,22 @@ public class Journal implements Closeable {
     
     NewEpochResponseProto.Builder builder =
         NewEpochResponseProto.newBuilder()
-        .setCurrentEpoch(lastAcceptedEpoch.get());
+        .setCurrentEpoch(lastAcceptedEpoch.get());    
         
     if (curSegmentTxId != HdfsConstants.INVALID_TXID) {
-      builder.setLastSegment(LogSegmentProto.newBuilder()
+      builder.setLastSegment(RemoteEditLogProto.newBuilder()
           .setStartTxId(curSegmentTxId)
           .setEndTxId(nextTxId - 1)
           .setIsInProgress(!curSegmentFinalized));
     }
     
-    return builder.build();
+    
+    // Return the partial builder instead of the proto, since
+    // we have to fill in the http port here, too, and that's
+    // only known to the caller.
+    // TODO: would be nice to see if we can make this less intertwined, 
+    // but don't want to do so at the cost of an extra round trip.
+    return builder;
   }
 
 
@@ -132,7 +140,7 @@ public class Journal implements Closeable {
     nextTxId += numTxns;
   }
 
-  private void checkRequest(RequestInfo reqInfo) throws IOException {
+  private synchronized void checkRequest(RequestInfo reqInfo) throws IOException {
     // Invariant 25 from ZAB paper
     if (reqInfo.getEpoch() < lastPromisedEpoch.get()) {
       throw new IOException("IPC's epoch " + reqInfo.getEpoch() +
@@ -190,9 +198,46 @@ public class Journal implements Closeable {
   }
   
 
-  public void syncLog(SyncLogRequestProto req) {
+  // NOTE: this is explicitly _not_ synchronized
+  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment, URL url)
+      throws IOException {
+    checkRequest(reqInfo);
     
+    // While not synchronized, transfer the file
+    String tmpFileName =
+        "synclog_" + segment.getStartTxId() + "_" +
+        reqInfo.getEpoch() + "." + reqInfo.getIpcSerialNumber();
     
+    List<File> localPaths = storage.getFiles(null, tmpFileName);
+    assert localPaths.size() == 1;
+    File tmpFile = localPaths.get(0);
+
+    boolean success = false;
+    
+    TransferFsImage.doGetUrl(url, localPaths, storage, true);
+    assert tmpFile.exists();
+    try {
+      synchronized (this) {
+        // Re-check that the writer who asked us to synchronize is still
+        // current, while holding the lock
+        checkRequest(reqInfo);
+        
+        success = tmpFile.renameTo(storage.getInProgressEditLog(
+            segment.getStartTxId()));
+        if (success) {
+          // If we're synchronizing the latest segment, update our cached
+          // info.
+          // TODO: can this be done more generally?
+          if (curSegmentTxId == segment.getStartTxId()) {
+            nextTxId = segment.getEndTxId() + 1;
+          }
+        }
+      }
+    } finally {
+      if (!success) {
+        tmpFile.delete();
+      }
+    }
   }
 
 

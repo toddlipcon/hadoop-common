@@ -19,10 +19,12 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URL;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
@@ -34,7 +36,6 @@ import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolTranslatorPB;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.ipc.ProtobufRpcEngine;
 import org.apache.hadoop.ipc.RPC;
-import org.apache.hadoop.util.StringUtils;
 
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -200,6 +201,17 @@ class IPCLoggerChannel implements AsyncLogger {
     });
   }
 
+  @Override
+  public ListenableFuture<Void> syncLog(final RemoteEditLogProto segment, final URL url) {
+    return executor.submit(new Callable<Void>() {
+      @Override
+      public Void call() throws IOException {
+        getProxy().syncLog(createReqInfo(), segment, url);
+        return null;
+      }
+    });
+  }
+  
   @Override
   public String toString() {
     return "Channel to journal node " + addr; 

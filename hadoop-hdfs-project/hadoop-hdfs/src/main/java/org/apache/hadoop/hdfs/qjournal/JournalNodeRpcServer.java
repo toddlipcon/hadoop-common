@@ -19,13 +19,17 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URL;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProtoOrBuilder;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto.Builder;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.QJournalProtocolService;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
@@ -102,7 +106,10 @@ class JournalNodeRpcServer implements QJournalProtocol {
   public NewEpochResponseProto newEpoch(String journalId,
       NamespaceInfo nsInfo,
       long epoch) throws IOException {
-    return jn.getOrCreateJournal(journalId).newEpoch(nsInfo, epoch);
+    NewEpochResponseProto.Builder builder =
+        jn.getOrCreateJournal(journalId).newEpoch(nsInfo, epoch);
+    builder.setHttpPort(jn.getBoundHttpAddress().getPort());
+    return builder.build();
   }
 
 
@@ -128,11 +135,6 @@ class JournalNodeRpcServer implements QJournalProtocol {
   }
 
   @Override
-  public void syncLog(SyncLogRequestProto req) throws IOException {
-    // TODO
-  }
-
-  @Override
   public GetEditLogManifestResponseProto getEditLogManifest(String jid,
       long sinceTxId) throws IOException {
     
@@ -143,6 +145,13 @@ class JournalNodeRpcServer implements QJournalProtocol {
         .setManifest(PBHelper.convert(manifest))
         .setHttpPort(jn.getBoundHttpAddress().getPort())
         .build();
+  }
+
+  @Override
+  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment, URL url)
+      throws IOException {
+    jn.getOrCreateJournal(reqInfo.getJournalId())
+        .syncLog(reqInfo, segment, url);
   }
 
   @Override
@@ -157,6 +166,6 @@ class JournalNodeRpcServer implements QJournalProtocol {
       throws IOException {
     jn.getOrCreateJournal(reqInfo.getJournalId())
         .paxosAccept(reqInfo, decisionId, value);
-    
   }
+
 }

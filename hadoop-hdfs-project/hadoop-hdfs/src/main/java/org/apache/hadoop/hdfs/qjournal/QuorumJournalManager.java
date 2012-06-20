@@ -18,10 +18,12 @@
 package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.net.InetSocketAddress;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
@@ -29,20 +31,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Map.Entry;
+import java.util.concurrent.ExecutionException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.server.common.Storage;
 import org.apache.hadoop.hdfs.server.namenode.EditLogFileInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.JournalManager;
 import org.apache.hadoop.hdfs.server.namenode.JournalSet;
 import org.apache.hadoop.hdfs.server.namenode.LocalOrRemoteEditLog;
+import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
@@ -51,6 +57,7 @@ import org.apache.hadoop.net.NetUtils;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Throwables;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Longs;
@@ -115,30 +122,46 @@ public class QuorumJournalManager implements JournalManager {
     LOG.info("newEpoch(" + getWriterEpoch() + ") responses:\n" +
         Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
 
-    Entry<AsyncLogger, NewEpochResponseProto> newestLogger = Collections.max(
+    Entry<AsyncLogger, NewEpochResponseProto> newestLoggerEntry = Collections.max(
         resps.entrySet(), RecoveryComparator.INSTANCE);
     
-    LOG.info("Newest logger: " + newestLogger);
-    
-    // Step 1: synchronize any lagging loggers to the newest one.
-    // TODO: implement this!
-    for (Entry<AsyncLogger, NewEpochResponseProto> resp : resps.entrySet()) {
-      if (RecoveryComparator.INSTANCE.compare(resp, newestLogger) < 0) {
-        LOG.info("Older logger needs sync: " + resp);
-        throw new UnsupportedOperationException(
-            "TODO: Older logger needs sync: " + resp);
-      }
-    }
+    LOG.info("Newest logger: " + newestLoggerEntry);
+    AsyncLogger newestLogger = newestLoggerEntry.getKey();
+    NewEpochResponseProto newestLoggerResponse = newestLoggerEntry.getValue();
     
     // TODO: there are probably a number of sanity-checks we can run
     // against invariants here
-    if (newestLogger.getValue().hasLastSegment()) {
-      long recoveryStartTxnId = newestLogger.getValue().getLastSegment().getStartTxId();
-      long recoveryEndTxnId = newestLogger.getValue().getLastSegment().getEndTxId();
+    if (newestLoggerResponse.hasLastSegment()) {
+      RemoteEditLogProto recoverySegment = newestLoggerResponse.getLastSegment();
+      long recoveryStartTxnId = recoverySegment.getStartTxId();
+      long recoveryEndTxnId = recoverySegment.getEndTxId();
       
       Preconditions.checkState(recoveryStartTxnId > 0 && recoveryEndTxnId > 0 &&
           recoveryEndTxnId >= recoveryStartTxnId, "bad newest logger: %s",
-          newestLogger);
+          newestLoggerEntry);
+      
+      URL syncFromUrl = buildURLToFetchLogs(
+          newestLogger.getHostNameForHttpFetch(),
+          newestLoggerResponse.getHttpPort(),
+          PBHelper.convert(recoverySegment));
+      // Step 1: synchronize any lagging loggers to the newest one.
+      for (Entry<AsyncLogger, NewEpochResponseProto> respEntry : resps.entrySet()) {
+        if (RecoveryComparator.INSTANCE.compare(respEntry, newestLoggerEntry) < 0) {
+          LOG.info("Synchronizing logger " + respEntry + " from URL: " +
+              syncFromUrl);
+          AsyncLogger logger = respEntry.getKey();
+          try {
+            logger.syncLog(recoverySegment, syncFromUrl).get();
+          } catch (ExecutionException e) {
+            // TODO: refactor this pattern out into AsyncLogger or something?
+            Throwables.propagateIfPossible(e.getCause(), IOException.class);
+            Throwables.propagate(e);
+          } catch (InterruptedException ie) {
+            Throwables.propagate(ie);
+          } 
+        }
+      }
+
     
       
       // Step 2: Run Paxos to ensure that if we fail mid-recovery any future
@@ -285,22 +308,10 @@ public class QuorumJournalManager implements JournalManager {
       RemoteEditLogManifest manifest = PBHelper.convert(response.getManifest());
       
       for (RemoteEditLog remoteLog : manifest.getLogs()) {
-        URL url;
-        try {
-          url = new URL("http",
-              logger.getHostNameForHttpFetch(),
-              response.getHttpPort(),
-              String.format("/getimage?startTxId=%d&endTxId=%d&jid=%s",
-                  remoteLog.getStartTxId(),
-                  remoteLog.getEndTxId(),
-                  journalId));
-        } catch (MalformedURLException e1) {
-          // should never get here
-          throw new RuntimeException(e1);
-        }
-        // TODO: refactor above mess out
+        URL url = buildURLToFetchLogs(logger.getHostNameForHttpFetch(),
+            response.getHttpPort(), remoteLog);
         LOG.info("URL: " + url);
-                        
+
         EditLogInputStream elis = new EditLogFileInputStream(
             new LocalOrRemoteEditLog.URLLog(url),
             remoteLog.getStartTxId(), remoteLog.getEndTxId(),
@@ -312,6 +323,40 @@ public class QuorumJournalManager implements JournalManager {
         streams, allStreams, fromTxnId, inProgressOk);
   }
   
+  private URL buildURLToFetchLogs(String hostname, int httpPort,
+      RemoteEditLog segment) {
+    Preconditions.checkArgument(segment.getStartTxId() > 0 &&
+        (segment.isInProgress() ||
+            segment.getEndTxId() > 0),
+        "Invalid segment: %s", segment);
+        
+    try {
+      StringBuilder path = new StringBuilder("/getimage?");
+      path.append("jid=").append(URLEncoder.encode(journalId, "UTF-8"));
+      path.append("&filename=")
+          .append(URLEncoder.encode(getLogFilename(segment), "UTF-8"));
+      path.append("&storageinfo=")
+          .append(URLEncoder.encode(nsInfo.toColonSeparatedString(), "UTF-8"));
+      return new URL("http", hostname, httpPort, path.toString());
+    } catch (MalformedURLException e) {
+      // should never get here.
+      throw new RuntimeException(e);
+    } catch (UnsupportedEncodingException e) {
+      // should never get here -- everyone supports UTF-8.
+      throw new RuntimeException(e);
+    }
+  }
+
+  private String getLogFilename(RemoteEditLog segment) {
+    if (segment.isInProgress()) {
+      return NNStorage.getInProgressEditsFileName(
+          segment.getStartTxId());
+    } else {
+      return NNStorage.getFinalizedEditsFileName(
+          segment.getStartTxId(), segment.getEndTxId());
+    }
+  }
+
   @Override
   public String toString() {
     return "Quorum journal manager " + uri;

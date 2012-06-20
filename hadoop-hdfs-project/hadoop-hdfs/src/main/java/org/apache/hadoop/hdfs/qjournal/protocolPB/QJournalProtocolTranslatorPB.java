@@ -2,9 +2,11 @@ package org.apache.hadoop.hdfs.qjournal.protocolPB;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.URL;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos;
@@ -146,9 +148,15 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
   }
 
   @Override
-  public void syncLog(SyncLogRequestProto req) throws IOException {
+  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment,
+      URL url) throws IOException {
     try {
-      rpcProxy.syncLog(NULL_CONTROLLER, req);
+      rpcProxy.syncLog(NULL_CONTROLLER,
+          SyncLogRequestProto.newBuilder()
+            .setReqInfo(convert(reqInfo))
+            .setLogSegment(segment)
+            .setFromURL(url.toExternalForm())
+            .build());
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
     }

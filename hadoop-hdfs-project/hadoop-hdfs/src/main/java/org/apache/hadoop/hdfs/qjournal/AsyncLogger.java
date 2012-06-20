@@ -17,6 +17,9 @@
  */
 package org.apache.hadoop.hdfs.qjournal;
 
+import java.net.URL;
+
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
@@ -46,6 +49,8 @@ interface AsyncLogger {
   
   public ListenableFuture<Void> paxosAccept(String decisionId,
       byte[] value);
+
+  public ListenableFuture<Void> syncLog(RemoteEditLogProto segment, URL url);
 
   public void setEpoch(long e);
 

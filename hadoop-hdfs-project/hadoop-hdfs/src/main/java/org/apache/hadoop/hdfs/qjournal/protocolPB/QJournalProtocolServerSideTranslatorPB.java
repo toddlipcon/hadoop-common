@@ -29,6 +29,7 @@ import com.google.protobuf.RpcController;
 import com.google.protobuf.ServiceException;
 
 import java.io.IOException;
+import java.net.URL;
 
 /**
  * Implementation for protobuf service that forwards requests
@@ -115,8 +116,13 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
   @Override
   public SyncLogResponseProto syncLog(RpcController controller,
       SyncLogRequestProto request) throws ServiceException {
-    // TODO Auto-generated method stub
-    throw new RuntimeException();
+    try {
+      impl.syncLog(convert(request.getReqInfo()), request.getLogSegment(),
+          new URL(request.getFromURL()));
+      return SyncLogResponseProto.getDefaultInstance();
+    } catch (IOException e) {
+      throw new ServiceException(e);
+    }
   }
 
   @Override
