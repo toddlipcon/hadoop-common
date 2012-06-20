@@ -140,11 +140,12 @@ public class QuorumJournalManager implements JournalManager {
           recoveryEndTxnId >= recoveryStartTxnId, "bad newest logger: %s",
           newestLoggerEntry);
       
+      // Step 1: synchronize any lagging loggers to the newest one.
       URL syncFromUrl = buildURLToFetchLogs(
           newestLogger.getHostNameForHttpFetch(),
           newestLoggerResponse.getHttpPort(),
           PBHelper.convert(recoverySegment));
-      // Step 1: synchronize any lagging loggers to the newest one.
+      
       for (Entry<AsyncLogger, NewEpochResponseProto> respEntry : resps.entrySet()) {
         if (RecoveryComparator.INSTANCE.compare(respEntry, newestLoggerEntry) < 0) {
           LOG.info("Synchronizing logger " + respEntry + " from URL: " +
@@ -163,10 +164,8 @@ public class QuorumJournalManager implements JournalManager {
       }
 
     
-      
       // Step 2: Run Paxos to ensure that if we fail mid-recovery any future
       // writers will recover to the same length
-      
       byte[] consensusLengthBytes =
           loggers.runPaxosConsensus("segment-" + recoveryStartTxnId,
           Longs.toByteArray(recoveryEndTxnId));
@@ -174,8 +173,27 @@ public class QuorumJournalManager implements JournalManager {
       
       LOG.info("Consensus length for segment " + recoveryStartTxnId + ": " + consensusLength);
 
-      // TODO: think carefully about this 
-      Preconditions.checkState(consensusLength <= recoveryEndTxnId,
+      
+      // TODO: this condition isn't quite right, in the following situation:
+      // edit lengths [3,4,5]
+      // first recovery:
+      // - sees [3,4,x]
+      // - picks length 4 for recoveryEndTxId
+      // - syncLog() up to 4
+      // - runs paxos, commits length 4
+      // - crashes before finalizing
+      // second recovery:
+      // - sees [x, 4, 5]
+      // - picks length 5 for recoveryEndTxId
+      // - syncLog() up to 5
+      // - runs paxos, sees already-committed value 4
+      //
+      // Possible fixes:
+      // 1) finalize() would truncate the log to length 4, if called on a longer log
+      // 2) have the "propose" phase of paxos run before the recovery, so if there's
+      //    already an accepted value, we used that for the recoveryEndTxId instead
+      //    of picking the max of our quorum
+      Preconditions.checkState(consensusLength == recoveryEndTxnId,
           "Consensus decided edit length %s but we synchronized to a shorter length %s",
           consensusLength, recoveryEndTxnId);
       

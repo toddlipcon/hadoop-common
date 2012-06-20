@@ -180,18 +180,20 @@ public class Journal implements Closeable {
           "Trying to finalize current log segment (startTxId=%s) " +
           "with ending txid=%s, but cur txid is %s",
           curSegmentTxId, endTxId, nextTxId - 1);
-      Preconditions.checkState(!curSegmentFinalized,
-          "Trying to finalize already-finalized segment %s-%s",
-          curSegmentTxId, endTxId);
-      
       if (curSegment != null) {
         curSegment.close();
         curSegment = null;
       }
-      fjm.finalizeLogSegment(startTxId, endTxId);
-      // TODO: add some sanity check here for non-overlapping edits
-      // in debug case?
-      curSegmentFinalized = true;
+      if (curSegmentFinalized) {
+        LOG.info("Received no-op request to finalize " +
+            "already-finalized segment " +
+            curSegmentTxId + "-" + endTxId);
+      } else {
+        fjm.finalizeLogSegment(startTxId, endTxId);
+        // TODO: add some sanity check here for non-overlapping edits
+        // in debug case?
+        curSegmentFinalized = true;
+      }
     } else {
       fjm.finalizeLogSegment(startTxId, endTxId);
     }

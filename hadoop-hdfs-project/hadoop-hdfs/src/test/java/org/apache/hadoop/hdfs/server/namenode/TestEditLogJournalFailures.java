@@ -68,11 +68,8 @@ public class TestEditLogJournalFailures {
     cluster.waitActive();
     fs = cluster.getFileSystem();
     
-    runtime = Runtime.getRuntime();
-    runtime = spy(runtime);
+    runtime = NameNodeAdapter.spyOnEditLogRuntime(cluster.getNameNode());
     doNothing().when(runtime).exit(anyInt());
-    
-    cluster.getNameNode().getFSImage().getEditLog().setRuntimeForTesting(runtime);
   }
   
   @After

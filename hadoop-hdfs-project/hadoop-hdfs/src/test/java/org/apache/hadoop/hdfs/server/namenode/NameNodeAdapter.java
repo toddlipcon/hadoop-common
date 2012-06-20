@@ -17,6 +17,10 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import static org.mockito.Matchers.anyInt;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.spy;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -219,5 +223,17 @@ public class NameNodeAdapter {
   
   public static File getInProgressEditsFile(StorageDirectory sd, long startTxId) {
     return NNStorage.getInProgressEditsFile(sd, startTxId);
+  }
+
+  
+  /**
+   * Spy on the edit log's Runtime instance, preventing Runtime.exit()
+   * from actually exiting.
+   */
+  public static Runtime spyOnEditLogRuntime(NameNode nn) {
+    Runtime runtime = Runtime.getRuntime();
+    runtime = spy(runtime);
+    nn.getFSImage().getEditLog().setRuntimeForTesting(runtime);
+    return runtime;
   }
 }

@@ -63,7 +63,9 @@ class QuorumOutputStream extends EditLogOutputStream {
 
   @Override
   public void abort() throws IOException {
-    throw new UnsupportedOperationException();
+    QuorumJournalManager.LOG.warn("Aborting " + this);
+    buf = null;
+    close();
   }
 
   @Override
