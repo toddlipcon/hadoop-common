@@ -76,15 +76,12 @@ public interface QJournalProtocol {
   public void finalizeLogSegment(RequestInfo reqInfo,
       long startTxId, long endTxId) throws IOException;
   
-  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment, URL url)
-      throws IOException;
-
   GetEditLogManifestResponseProto getEditLogManifest(
       String jid, long sinceTxId) throws IOException;
   
   public PaxosPrepareResponseProto paxosPrepare(RequestInfo reqInfo,
-      String decisionId) throws IOException;
-  public void paxosAccept(RequestInfo reqInfo,
-      String decisionId, byte[] value) throws IOException;
+      long segmentTxId) throws IOException;
+  public void paxosAccept(RequestInfo reqInfo, RemoteEditLogProto log,
+      URL fromUrl) throws IOException;
 
 }

@@ -49,9 +49,8 @@ class JNStorage extends Storage {
         NNStorage.getInProgressEditsFileName(startTxId));
   }
 
-  File getPaxosFile(String decisionId) {
-    // TODO: sanity-check decisionId
-    return new File(getPaxosDir(), decisionId);
+  File getPaxosFile(long segmentTxId) {
+    return new File(getPaxosDir(), String.valueOf(segmentTxId));
   }
   
   File getPaxosDir() {

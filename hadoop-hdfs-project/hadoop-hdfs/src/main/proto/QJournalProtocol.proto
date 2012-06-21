@@ -33,6 +33,11 @@ message RequestInfoProto {
   required uint64 ipcSerialNumber = 3;
 }
 
+message LogRecoveryProto {
+  required uint64 endTxId = 1;
+  required uint64 acceptedInEpoch = 2;
+  // TODO: add md5sum here for extra safety!
+}
 
 /**
  * TODO
@@ -127,29 +132,19 @@ message GetEditLogManifestResponseProto {
   // required NamespaceInfoProto nsInfo = 2;
 }
 
-/**
- * syncLog()
- */
-message SyncLogRequestProto {
-  required RequestInfoProto reqInfo = 1;
-  required RemoteEditLogProto logSegment = 2;
-  required string fromURL= 3;
-}
-
-message SyncLogResponseProto {
-}
 
 /**
  * paxosPrepare()
  */
 message PaxosPrepareRequestProto {
   required RequestInfoProto reqInfo = 1;
-  required string decisionId = 2;
+  required uint64 segmentTxId = 2;
 }
 
 message PaxosPrepareResponseProto {
-  optional bytes acceptedValue = 1;
-  optional uint64 acceptedEpoch = 2;
+  optional RemoteEditLogProto segmentInfo = 1;
+  optional LogRecoveryProto acceptedRecovery = 2;
+  required uint32 httpPort = 3;
 }
 
 /**
@@ -157,24 +152,13 @@ message PaxosPrepareResponseProto {
  */
 message PaxosAcceptRequestProto {
   required RequestInfoProto reqInfo = 1;
-  required string decisionId = 2;
-  required bytes value = 3;
+  required RemoteEditLogProto logSegment = 2;
+  optional string fromURL = 3;
 }
 
 message PaxosAcceptResponseProto {
 }
 
-
-/**
- * readLog()
- */
-message ReadLogRequestProto {
-  required uint64 txid = 1;
-  required uint32 maxLength = 2;
-}
-
-message ReadLogResponseProto {
-}
 
 /**
  * Protocol used to journal edits to a remote node. Currently,
@@ -211,12 +195,4 @@ service QJournalProtocolService {
       returns (PaxosPrepareResponseProto);
   rpc paxosAccept(PaxosAcceptRequestProto)
       returns (PaxosAcceptResponseProto);
-
-  rpc syncLog(SyncLogRequestProto)
-      returns (SyncLogResponseProto);
-
-/*
-  rpc readLog(ReadLogRequestProto)
-      returns (ReadLogResponseProto);
-*/
 }

@@ -23,7 +23,6 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosAcce
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.protocol.JournalProtocol;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
@@ -32,7 +31,6 @@ import org.apache.hadoop.ipc.ProtocolMetaInterface;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RpcClientUtil;
 
-import com.google.protobuf.ByteString;
 import com.google.protobuf.RpcController;
 import com.google.protobuf.ServiceException;
 
@@ -148,21 +146,6 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
   }
 
   @Override
-  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment,
-      URL url) throws IOException {
-    try {
-      rpcProxy.syncLog(NULL_CONTROLLER,
-          SyncLogRequestProto.newBuilder()
-            .setReqInfo(convert(reqInfo))
-            .setLogSegment(segment)
-            .setFromURL(url.toExternalForm())
-            .build());
-    } catch (ServiceException e) {
-      throw ProtobufHelper.getRemoteException(e);
-    }
-  }
-
-  @Override
   public GetEditLogManifestResponseProto getEditLogManifest(String jid,
       long sinceTxId) throws IOException {
     try {
@@ -178,12 +161,12 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
 
   @Override
   public PaxosPrepareResponseProto paxosPrepare(RequestInfo reqInfo,
-      String decisionId) throws IOException {
+      long segmentTxId) throws IOException {
     try {
       return rpcProxy.paxosPrepare(NULL_CONTROLLER,
           PaxosPrepareRequestProto.newBuilder()
             .setReqInfo(convert(reqInfo))
-            .setDecisionId(decisionId)
+            .setSegmentTxId(segmentTxId)
             .build());
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
@@ -191,14 +174,14 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
   }
 
   @Override
-  public void paxosAccept(RequestInfo reqInfo, String decisionId, byte[] value)
-      throws IOException {
+  public void paxosAccept(RequestInfo reqInfo, RemoteEditLogProto log,
+      URL fromUrl) throws IOException {
     try {
       rpcProxy.paxosAccept(NULL_CONTROLLER,
           PaxosAcceptRequestProto.newBuilder()
             .setReqInfo(convert(reqInfo))
-            .setDecisionId(decisionId)
-            .setValue(ByteString.copyFrom(value))
+            .setLogSegment(log)
+            .setFromURL(fromUrl.toExternalForm())
             .build());
     } catch (ServiceException e) {
       throw ProtobufHelper.getRemoteException(e);
@@ -210,5 +193,4 @@ public class QJournalProtocolTranslatorPB implements ProtocolMetaInterface,
         QJournalProtocolPB.class, RPC.RpcKind.RPC_PROTOCOL_BUFFER,
         RPC.getProtocolVersion(QJournalProtocolPB.class), methodName);
   }
-
 }

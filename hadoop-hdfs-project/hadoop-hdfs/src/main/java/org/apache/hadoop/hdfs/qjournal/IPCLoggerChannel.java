@@ -180,38 +180,27 @@ class IPCLoggerChannel implements AsyncLogger {
 
   @Override
   public ListenableFuture<PaxosPrepareResponseProto> paxosPrepare(
-      final String decisionId) {
+      final long segmentTxId) {
     return executor.submit(new Callable<PaxosPrepareResponseProto>() {
       @Override
       public PaxosPrepareResponseProto call() throws IOException {
-        return getProxy().paxosPrepare(createReqInfo(), decisionId);
+        return getProxy().paxosPrepare(createReqInfo(), segmentTxId);
       }
     });
   }
 
   @Override
-  public ListenableFuture<Void> paxosAccept(final String decisionId,
-      final byte[] value) {
+  public ListenableFuture<Void> paxosAccept(
+      final RemoteEditLogProto log, final URL url) {
     return executor.submit(new Callable<Void>() {
       @Override
       public Void call() throws IOException {
-        getProxy().paxosAccept(createReqInfo(), decisionId, value);
+        getProxy().paxosAccept(createReqInfo(), log, url);
         return null;
       }
     });
   }
 
-  @Override
-  public ListenableFuture<Void> syncLog(final RemoteEditLogProto segment, final URL url) {
-    return executor.submit(new Callable<Void>() {
-      @Override
-      public Void call() throws IOException {
-        getProxy().syncLog(createReqInfo(), segment, url);
-        return null;
-      }
-    });
-  }
-  
   @Override
   public String toString() {
     return "Channel to journal node " + addr; 

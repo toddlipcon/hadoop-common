@@ -45,12 +45,9 @@ interface AsyncLogger {
       long fromTxnId);
 
   public ListenableFuture<PaxosPrepareResponseProto> paxosPrepare(
-      String decisionId);
+      long segmentTxId);
   
-  public ListenableFuture<Void> paxosAccept(String decisionId,
-      byte[] value);
-
-  public ListenableFuture<Void> syncLog(RemoteEditLogProto segment, URL url);
+  public ListenableFuture<Void> paxosAccept(RemoteEditLogProto log, URL fromUrl);
 
   public void setEpoch(long e);
 

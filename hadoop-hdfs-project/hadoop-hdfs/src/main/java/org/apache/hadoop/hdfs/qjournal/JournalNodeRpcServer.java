@@ -28,11 +28,8 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProtoOrBuilder;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto.Builder;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.QJournalProtocolService;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolPB;
 import org.apache.hadoop.hdfs.qjournal.protocolPB.QJournalProtocolServerSideTranslatorPB;
@@ -148,24 +145,20 @@ class JournalNodeRpcServer implements QJournalProtocol {
   }
 
   @Override
-  public void syncLog(RequestInfo reqInfo, RemoteEditLogProto segment, URL url)
-      throws IOException {
-    jn.getOrCreateJournal(reqInfo.getJournalId())
-        .syncLog(reqInfo, segment, url);
-  }
-
-  @Override
   public PaxosPrepareResponseProto paxosPrepare(RequestInfo reqInfo,
-      String decisionId) throws IOException {
-    return jn.getOrCreateJournal(reqInfo.getJournalId())
-        .paxosPrepare(reqInfo, decisionId);
+      long segmentTxId) throws IOException {
+    PaxosPrepareResponseProto.Builder ret =
+        jn.getOrCreateJournal(reqInfo.getJournalId())
+        .paxosPrepare(reqInfo, segmentTxId);
+    ret.setHttpPort(jn.getBoundHttpAddress().getPort());
+    return ret.build();
   }
 
   @Override
-  public void paxosAccept(RequestInfo reqInfo, String decisionId, byte[] value)
-      throws IOException {
+  public void paxosAccept(RequestInfo reqInfo, RemoteEditLogProto log,
+      URL fromUrl) throws IOException {
     jn.getOrCreateJournal(reqInfo.getJournalId())
-        .paxosAccept(reqInfo, decisionId, value);
+        .paxosAccept(reqInfo, log, fromUrl);
   }
 
 }

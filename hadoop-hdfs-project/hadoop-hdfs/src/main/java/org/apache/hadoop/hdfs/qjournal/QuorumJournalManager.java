@@ -29,9 +29,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.PriorityQueue;
 import java.util.Map.Entry;
-import java.util.concurrent.ExecutionException;
+import java.util.PriorityQueue;
+import java.util.SortedSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -41,6 +41,7 @@ import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.protocolPB.PBHelper;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.server.namenode.EditLogFileInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
@@ -57,10 +58,9 @@ import org.apache.hadoop.util.StringUtils;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Lists;
-import com.google.common.primitives.Longs;
+import com.google.common.collect.Sets;
 
 /**
  * A JournalManager that writes to a set of remote JournalNodes,
@@ -118,111 +118,110 @@ public class QuorumJournalManager implements JournalManager {
     LOG.info("newEpoch(" + getWriterEpoch() + ") responses:\n" +
         Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
 
-    Entry<AsyncLogger, NewEpochResponseProto> newestLoggerEntry = Collections.max(
-        resps.entrySet(), RecoveryComparator.INSTANCE);
-    
-    LOG.info("Newest logger: " + newestLoggerEntry);
-    AsyncLogger newestLogger = newestLoggerEntry.getKey();
-    NewEpochResponseProto newestLoggerResponse = newestLoggerEntry.getValue();
+    SortedSet<Long> segmentsNeedingRecovery = Sets.newTreeSet();
+    for (NewEpochResponseProto r : resps.values()) {
+      if (r.getLastSegment().getIsInProgress()) {
+        segmentsNeedingRecovery.add(r.getLastSegment().getStartTxId());
+      }
+    }
     
     // TODO: there are probably a number of sanity-checks we can run
     // against invariants here
-    if (newestLoggerResponse.hasLastSegment()) {
-      RemoteEditLogProto recoverySegment = newestLoggerResponse.getLastSegment();
-      long recoveryStartTxnId = recoverySegment.getStartTxId();
-      long recoveryEndTxnId = recoverySegment.getEndTxId();
-      
-      Preconditions.checkState(recoveryStartTxnId > 0 && recoveryEndTxnId > 0 &&
-          recoveryEndTxnId >= recoveryStartTxnId, "bad newest logger: %s",
-          newestLoggerEntry);
-      
-      // Step 1: synchronize any lagging loggers to the newest one.
-      URL syncFromUrl = buildURLToFetchLogs(
-          newestLogger.getHostNameForHttpFetch(),
-          newestLoggerResponse.getHttpPort(),
-          PBHelper.convert(recoverySegment));
-      
-      for (Entry<AsyncLogger, NewEpochResponseProto> respEntry : resps.entrySet()) {
-        if (RecoveryComparator.INSTANCE.compare(respEntry, newestLoggerEntry) < 0) {
-          LOG.info("Synchronizing logger " + respEntry + " from URL: " +
-              syncFromUrl);
-          AsyncLogger logger = respEntry.getKey();
-          try {
-            logger.syncLog(recoverySegment, syncFromUrl).get();
-          } catch (ExecutionException e) {
-            // TODO: refactor this pattern out into AsyncLogger or something?
-            Throwables.propagateIfPossible(e.getCause(), IOException.class);
-            Throwables.propagate(e);
-          } catch (InterruptedException ie) {
-            Throwables.propagate(ie);
-          } 
-        }
-      }
-
-    
-      // Step 2: Run Paxos to ensure that if we fail mid-recovery any future
-      // writers will recover to the same length
-      byte[] consensusLengthBytes =
-          loggers.runPaxosConsensus("segment-" + recoveryStartTxnId,
-          Longs.toByteArray(recoveryEndTxnId));
-      long consensusLength = Longs.fromByteArray(consensusLengthBytes);
-      
-      LOG.info("Consensus length for segment " + recoveryStartTxnId + ": " + consensusLength);
-
-      
-      // TODO: this condition isn't quite right, in the following situation:
-      // edit lengths [3,4,5]
-      // first recovery:
-      // - sees [3,4,x]
-      // - picks length 4 for recoveryEndTxId
-      // - syncLog() up to 4
-      // - runs paxos, commits length 4
-      // - crashes before finalizing
-      // second recovery:
-      // - sees [x, 4, 5]
-      // - picks length 5 for recoveryEndTxId
-      // - syncLog() up to 5
-      // - runs paxos, sees already-committed value 4
-      //
-      // Possible fixes:
-      // 1) finalize() would truncate the log to length 4, if called on a longer log
-      // 2) have the "propose" phase of paxos run before the recovery, so if there's
-      //    already an accepted value, we used that for the recoveryEndTxId instead
-      //    of picking the max of our quorum
-      Preconditions.checkState(consensusLength == recoveryEndTxnId,
-          "Consensus decided edit length %s but we synchronized to a shorter length %s",
-          consensusLength, recoveryEndTxnId);
-      
-      
-      QuorumCall<AsyncLogger, Void> finalize =
-          loggers.finalizeLogSegment(recoveryStartTxnId, recoveryEndTxnId);
-      loggers.waitForWriteQuorum(finalize, 20000); // TODO: timeout configurable
+    if (!segmentsNeedingRecovery.isEmpty()) {
+      recoverUnclosedSegment(segmentsNeedingRecovery.last());
     }
     isActiveWriter = true;
   }
   
-  private static class RecoveryComparator
-      implements Comparator<Map.Entry<AsyncLogger, NewEpochResponseProto>> {
-    private static final RecoveryComparator INSTANCE =
-        new RecoveryComparator();
+  private void recoverUnclosedSegment(long segmentTxId) throws IOException {
+    Preconditions.checkArgument(segmentTxId > 0);
+
+    LOG.info("Beginning recovery of unclosed segment starting at txid " +
+        segmentTxId);
     
-    @Override
-    public int compare(
-        Entry<AsyncLogger, NewEpochResponseProto> a,
-        Entry<AsyncLogger, NewEpochResponseProto> b) {
-      
-      NewEpochResponseProto r1 = a.getValue();
-      NewEpochResponseProto r2 = b.getValue();
-      
-      return ComparisonChain.start()
-          .compare(r1.hasLastSegment(), r2.hasLastSegment())
-          .compare(r1.getCurrentEpoch(), r2.getCurrentEpoch())
-          .compare(r1.getLastSegment().getEndTxId(),
-                   r2.getLastSegment().getEndTxId())
-          .result();
+    Map<AsyncLogger, PaxosPrepareResponseProto> prepareResponses =
+        loggers.prepareRecovery(segmentTxId);
+    
+    Entry<AsyncLogger, PaxosPrepareResponseProto> bestEntry = Collections.max(
+        prepareResponses.entrySet(), RECOVERY_COMPARATOR); 
+
+    AsyncLogger bestLogger = bestEntry.getKey();
+    PaxosPrepareResponseProto bestResponse = bestEntry.getValue();
+    
+    if (bestResponse.hasAcceptedRecovery()) {
+      LOG.info("Using already-accepted recovery for segment " +
+          "starting at txid " + segmentTxId + ": " + bestEntry);
+    } else if (bestResponse.hasSegmentInfo()) {
+      LOG.info("Using longest log: " + bestEntry);
+    } else {
+      throw new AssertionError("Invariant violated! None of the responses " +
+          "had a log to recover!\n" +
+          Joiner.on("\n").withKeyValueSeparator(": ").join(prepareResponses));
     }
+    
+    RemoteEditLogProto logToSync = bestResponse.getSegmentInfo();
+    URL syncFromUrl = buildURLToFetchLogs(
+        bestLogger.getHostNameForHttpFetch(),
+        bestResponse.getHttpPort(),
+        PBHelper.convert(bestResponse.getSegmentInfo()));
+    
+    assert segmentTxId == logToSync.getStartTxId();
+    loggers.acceptRecovery(logToSync, syncFromUrl);
+    
+    // Write a test case for this condition, which I think should work now:
+    // edit lengths [3,4,5]
+    // first recovery:
+    // - sees [3,4,x]
+    // - picks length 4 for recoveryEndTxId
+    // - syncLog() up to 4
+    // - runs paxos, commits length 4
+    // - crashes before finalizing
+    // second recovery:
+    // - sees [x, 4, 5]
+    // - picks length 5 for recoveryEndTxId
+    // - syncLog() up to 5
+    // - runs paxos, sees already-committed value 4
+    //
+    
+
+    // TODO:
+    // we should only try to finalize loggers who successfully synced above
+    // eg if a logger was down, we don't want to send the finalize request.
+    // write a test for this!
+    
+    QuorumCall<AsyncLogger, Void> finalize =
+        loggers.finalizeLogSegment(logToSync.getStartTxId(), logToSync.getEndTxId()); 
+    loggers.waitForWriteQuorum(finalize, 20000); // TODO: timeout configurable
   }
   
+  private static final Comparator<Entry<AsyncLogger, PaxosPrepareResponseProto>> RECOVERY_COMPARATOR =
+  new Comparator<Entry<AsyncLogger, PaxosPrepareResponseProto>>() {
+      @Override
+      public int compare(
+          Entry<AsyncLogger, PaxosPrepareResponseProto> a,
+          Entry<AsyncLogger, PaxosPrepareResponseProto> b) {
+        
+        PaxosPrepareResponseProto r1 = a.getValue();
+        PaxosPrepareResponseProto r2 = b.getValue();
+        
+        if (r1.hasSegmentInfo() && r2.hasSegmentInfo()) {
+          assert r1.getSegmentInfo().getStartTxId() ==
+              r2.getSegmentInfo().getStartTxId() : "bad args: " + r1 + ", " + r2;
+        }
+        
+        return ComparisonChain.start()
+            // If one of them has accepted something and the other hasn't,
+            // use the one with an accepted recovery
+            .compare(r1.hasAcceptedRecovery(), r2.hasAcceptedRecovery())
+            // If they both accepted, use the one that's more recent
+            .compare(r1.getAcceptedRecovery().getAcceptedInEpoch(),
+                     r2.getAcceptedRecovery().getAcceptedInEpoch())
+            // Otherwise, choose based on which log is longer
+            .compare(r1.hasSegmentInfo(), r2.hasSegmentInfo())
+            .compare(r1.getSegmentInfo().getEndTxId(), r2.getSegmentInfo().getEndTxId())
+            .result();
+      }
+  };
 
   long getWriterEpoch() {
     return loggers.getEpoch();

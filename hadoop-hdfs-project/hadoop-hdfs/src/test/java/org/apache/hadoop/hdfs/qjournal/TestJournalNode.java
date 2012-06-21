@@ -24,7 +24,6 @@ import java.net.InetSocketAddress;
 import java.net.URL;
 import java.util.concurrent.ExecutionException;
 
-import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
@@ -49,9 +48,6 @@ public class TestJournalNode {
       12345, "mycluster", "my-bp", 0L, 0);
   private static final String JID = "test-journalid";
 
-  private static final String TEST_DECISION = "decision-1";
-  private static final byte[] TEST_PAXOS_VALUE_1 = "val-1".getBytes();
-  
   private JournalNode jn;
   private Journal journal; 
   private Configuration conf = new Configuration();
@@ -206,7 +202,7 @@ public class TestJournalNode {
     // We need to run newEpoch() first, or else we have no way to distinguish
     // different proposals for the same decision.
     try {
-      ch.paxosPrepare("decision-1").get();
+      ch.paxosPrepare(1L).get();
       fail("Did not throw IllegalState when trying to run paxos without an epoch");
     } catch (ExecutionException ise) {
       GenericTestUtils.assertExceptionContains("bad epoch", ise);
@@ -215,26 +211,37 @@ public class TestJournalNode {
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     
-    // prepare() with no previously accepted value returns an empty protobuf
-    PaxosPrepareResponseProto prep = ch.paxosPrepare("decision-1").get();
+    // prepare() with no previously accepted value and no logs present
+    PaxosPrepareResponseProto prep = ch.paxosPrepare(1L).get();
     System.err.println("Prep: " + prep);
-    assertFalse(prep.hasAcceptedEpoch());
-    assertFalse(prep.hasAcceptedValue());
+    assertFalse(prep.hasAcceptedRecovery());
+    assertFalse(prep.hasSegmentInfo());
+    
+    // Make a log segment, and prepare again -- this time should see the
+    // segment existing.
+    ch.startLogSegment(1L).get();
+    ch.sendEdits(1L, 1, "hello".getBytes(Charsets.UTF_8)).get();
+
+    prep = ch.paxosPrepare(1L).get();
+    System.err.println("Prep: " + prep);
+    assertFalse(prep.hasAcceptedRecovery());
+    assertTrue(prep.hasSegmentInfo());
     
     // accept() should save the accepted value in persistent storage
-    ch.paxosAccept(TEST_DECISION, TEST_PAXOS_VALUE_1).get();
+    // TODO: should be able to accept without a URL here
+    ch.paxosAccept(prep.getSegmentInfo(), new URL("file:///dev/null")).get();
 
     // So another prepare() call from a new epoch would return this value
     ch.newEpoch(FAKE_NSINFO, 2);
     ch.setEpoch(2);
-    prep = ch.paxosPrepare("decision-1").get();
-    assertEquals(1, prep.getAcceptedEpoch());
-    assertArrayEquals(TEST_PAXOS_VALUE_1, prep.getAcceptedValue().toByteArray());
+    prep = ch.paxosPrepare(1L).get();
+    assertEquals(1L, prep.getAcceptedRecovery().getAcceptedInEpoch());
+    assertEquals(1L, prep.getAcceptedRecovery().getEndTxId());
     
     // A prepare() or accept() call from an earlier epoch should now be rejected
     ch.setEpoch(1);
     try {
-      ch.paxosPrepare(TEST_DECISION).get();
+      ch.paxosPrepare(1L).get();
       fail("prepare from earlier epoch not rejected");
     } catch (ExecutionException ioe) {
       GenericTestUtils.assertExceptionContains(
@@ -242,7 +249,7 @@ public class TestJournalNode {
           ioe);
     }
     try {
-      ch.paxosAccept(TEST_DECISION, new byte[0]).get();
+      ch.paxosAccept(prep.getSegmentInfo(), new URL("file:///dev/null")).get();
       fail("accept from earlier epoch not rejected");
     } catch (ExecutionException ioe) {
       GenericTestUtils.assertExceptionContains(
@@ -250,12 +257,6 @@ public class TestJournalNode {
           ioe);
     }
   }
-  
-  @Test
-  public void testSyncLog() throws Exception {
-    // TODO ch.syncLog(1, new URL("http://google.com/")).get();
-  }
-  
   // TODO:
   // - add test that checks formatting behavior
   // - add test that checks rejects newEpoch if nsinfo doesn't match

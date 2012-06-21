@@ -21,8 +21,6 @@ import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrep
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentRequestProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.StartLogSegmentResponseProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogRequestProto;
-import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.SyncLogResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 
 import com.google.protobuf.RpcController;
@@ -114,18 +112,6 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
   }
 
   @Override
-  public SyncLogResponseProto syncLog(RpcController controller,
-      SyncLogRequestProto request) throws ServiceException {
-    try {
-      impl.syncLog(convert(request.getReqInfo()), request.getLogSegment(),
-          new URL(request.getFromURL()));
-      return SyncLogResponseProto.getDefaultInstance();
-    } catch (IOException e) {
-      throw new ServiceException(e);
-    }
-  }
-
-  @Override
   public GetEditLogManifestResponseProto getEditLogManifest(
       RpcController controller, GetEditLogManifestRequestProto request)
       throws ServiceException {
@@ -144,7 +130,7 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
       PaxosPrepareRequestProto request) throws ServiceException {
     try {
       return impl.paxosPrepare(convert(request.getReqInfo()),
-          request.getDecisionId());
+          request.getSegmentTxId());
     } catch (IOException e) {
       throw new ServiceException(e);
     }
@@ -155,8 +141,8 @@ public class QJournalProtocolServerSideTranslatorPB implements QJournalProtocolP
       PaxosAcceptRequestProto request) throws ServiceException {
     try {
       impl.paxosAccept(convert(request.getReqInfo()),
-          request.getDecisionId(),
-          request.getValue().toByteArray());
+          request.getLogSegment(),
+          new URL(request.getFromURL()));
       return PaxosAcceptResponseProto.getDefaultInstance();
     } catch (IOException e) {
       throw new ServiceException(e);

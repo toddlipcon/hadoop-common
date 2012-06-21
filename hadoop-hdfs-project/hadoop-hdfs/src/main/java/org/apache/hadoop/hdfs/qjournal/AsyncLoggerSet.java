@@ -18,14 +18,14 @@
 package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.Comparator;
+import java.net.URL;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hdfs.protocol.proto.HdfsProtos.RemoteEditLogProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEditLogManifestResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetEpochInfoResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
@@ -34,7 +34,6 @@ import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -87,51 +86,27 @@ class AsyncLoggerSet {
   }
   
   
-  byte[] runPaxosConsensus(String decisionName,
-      byte[] valueToPropose) throws IOException {
-
-    // ================================================
-    // Step 1. Prepare.
-    // ================================================
-    
+  Map<AsyncLogger, PaxosPrepareResponseProto> prepareRecovery(
+      long segmentTxId) throws IOException {
     QuorumCall<AsyncLogger,PaxosPrepareResponseProto> prepare =
-        paxosPrepare(decisionName);
-    Map<AsyncLogger, PaxosPrepareResponseProto> prepareResponses =
+        paxosPrepare(segmentTxId);
+    Map<AsyncLogger, PaxosPrepareResponseProto> resps=
         waitForWriteQuorum(prepare, NEWEPOCH_TIMEOUT_MS);
-    
-    PaxosPrepareResponseProto bestResponse = Collections.max(
-        prepareResponses.values(), new Comparator<PaxosPrepareResponseProto>() {
-          @Override
-          public int compare(PaxosPrepareResponseProto o1,
-              PaxosPrepareResponseProto o2) {
-            return ComparisonChain.start()
-                .compare(o1.hasAcceptedEpoch(), o2.hasAcceptedEpoch())
-                .compare(o1.getAcceptedEpoch(), o2.getAcceptedEpoch())
-                .result();
-          }
-        });
-    
-    if (bestResponse.hasAcceptedEpoch()) {
-      LOG.info("Using already-accepted response for paxos instance " +
-          decisionName + ": " + bestResponse);
-      
-      valueToPropose = bestResponse.getAcceptedValue().toByteArray();
-    }
-    
+    return resps;
+  }
+  
+  void acceptRecovery(RemoteEditLogProto log, URL fromURL)
+      throws IOException {
     // ================================================
     // Step 2. Accept.
     // ================================================
 
-    QuorumCall<AsyncLogger,Void> accept = paxosAccept(decisionName, valueToPropose);
+    QuorumCall<AsyncLogger,Void> accept = paxosAccept(log, fromURL);
     waitForWriteQuorum(accept, NEWEPOCH_TIMEOUT_MS);
 
     // TODO: some sanity-checks, eg if anyone returns an IllegalStateException
     // we should probably bail!
-    
-    return valueToPropose;
   }
-      
-      
   
   private void setEpoch(long e) {
     for (AsyncLogger l : loggers) {
@@ -243,27 +218,27 @@ class AsyncLoggerSet {
   
 
   private QuorumCall<AsyncLogger, PaxosPrepareResponseProto>
-      paxosPrepare(String decisionId) {
+      paxosPrepare(long segmentTxId) {
     Map<AsyncLogger,
       ListenableFuture<PaxosPrepareResponseProto>> calls
       = Maps.newHashMap();
     for (AsyncLogger logger : loggers) {
       ListenableFuture<PaxosPrepareResponseProto> future =
-          logger.paxosPrepare(decisionId);
+          logger.paxosPrepare(segmentTxId);
       calls.put(logger, future);
     }
     return QuorumCall.create(calls);
   }
 
   private QuorumCall<AsyncLogger,Void>
-      paxosAccept(String decisionId, byte[] value) {
-    Preconditions.checkArgument(value != null);
+      paxosAccept(RemoteEditLogProto log, URL fromURL) {
+    // TODO: sanity check log txids
     
     Map<AsyncLogger, ListenableFuture<Void>> calls
       = Maps.newHashMap();
     for (AsyncLogger logger : loggers) {
       ListenableFuture<Void> future =
-          logger.paxosAccept(decisionId, value);
+          logger.paxosAccept(log, fromURL);
       calls.put(logger, future);
     }
     return QuorumCall.create(calls);
