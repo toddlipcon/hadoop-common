@@ -314,6 +314,9 @@ public class Journal implements Closeable {
       LOG.info("Skipping download of log " + segment + " -- already have up-to-date logs");
     }
     
+    // TODO: is it OK that this is non-atomic?
+    // we might be left with an older epoch recorded, but a newer log
+    
     persistPaxosData(segmentTxId, newData);
     LOG.info("Accepted paxos value for segment " + segmentTxId + "': " + newData);
   }
