@@ -79,6 +79,7 @@ class JNStorage extends Storage {
     StorageState state = sd.analyzeStorage(StartupOption.REGULAR, this);
     switch (state) {
     case NON_EXISTENT:
+    case NOT_FORMATTED:
       format();
       break;
     default:

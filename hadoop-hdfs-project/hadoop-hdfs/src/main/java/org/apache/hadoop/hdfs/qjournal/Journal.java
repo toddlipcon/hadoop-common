@@ -56,6 +56,19 @@ public class Journal implements Closeable {
     this.fjm = storage.getJournalManager();
   }
   
+  private void scanStorage() throws IOException {
+    if (!fjm.getStorageDirectory().getCurrentDir().exists()) {
+      return;
+    }
+    LOG.info("Scanning storage " + fjm);
+    List<EditLogFile> files = fjm.getLogFiles(0);
+    if (!files.isEmpty()) {
+      EditLogFile latestLog = files.get(files.size() - 1);
+      LOG.info("Latest log is " + latestLog);
+      curSegmentTxId = latestLog.getFirstTxId();
+    }
+  }
+
   synchronized void format() throws IOException {
     storage.format();
   }
@@ -99,7 +112,10 @@ public class Journal implements Closeable {
     
     NewEpochResponseProto.Builder builder =
         NewEpochResponseProto.newBuilder();
-        
+
+    // TODO: we only need to do this once, not on writer switchover.
+    scanStorage();
+
     if (curSegmentTxId != HdfsConstants.INVALID_TXID) {
       builder.setCurSegmentTxId(curSegmentTxId);
     }
@@ -235,10 +251,16 @@ public class Journal implements Closeable {
     }
     
     if (curSegmentTxId != HdfsConstants.INVALID_TXID) {
-      resp.setSegmentInfo(getSegmentInfo(segmentTxId));
+      RemoteEditLogProto segInfo = getSegmentInfo(segmentTxId);
+      if (segInfo == null) {
+        throw new AssertionError("could not find segment info for " +
+            "segment id " + curSegmentTxId);
+      }
+      resp.setSegmentInfo(segInfo);
     }
     
-    LOG.info("Prepared paxos for decision '" + segmentTxId + "': " + resp);
+    LOG.info("Prepared paxos for decision '" + segmentTxId + "': " +
+        resp.clone().buildPartial());
     return resp;
   }
 
@@ -340,7 +362,8 @@ public class Journal implements Closeable {
     File tmpFile = localPaths.get(0);
  
     boolean success = false;
-    
+
+    LOG.info("Synchronizing log " + segment + " from " + url);
     TransferFsImage.doGetUrl(url, localPaths, storage, true);
     assert tmpFile.exists();
     try {

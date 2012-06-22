@@ -144,7 +144,6 @@ public class JournalNodeHttpServer {
 
   public static Journal getJournalFromContext(ServletContext context, String jid) {
     JournalNode jn = (JournalNode)context.getAttribute(JN_ATTRIBUTE_KEY);
-    // TODO: we probably don't want to create in this case!
     return jn.getOrCreateJournal(jid);
   }
 

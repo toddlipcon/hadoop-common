@@ -30,10 +30,13 @@ import java.util.concurrent.ExecutionException;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSTestUtil;
+import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProtoOrBuilder;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
+import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
@@ -41,9 +44,11 @@ import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.test.GenericTestUtils;
+import org.aspectj.util.FileUtil;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 import com.google.common.base.Charsets;
 import com.google.common.primitives.Bytes;
@@ -54,7 +59,8 @@ public class TestJournalNode {
   private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
       12345, "mycluster", "my-bp", 0L, 0);
   private static final String JID = "test-journalid";
-  private byte[] TWO_EDITS;
+  private static final File TEST_LOG_DIR = new File(
+      new File(MiniDFSCluster.getBaseDirectory()), "TestJournalNode");
 
   private JournalNode jn;
   private Journal journal; 
@@ -81,18 +87,17 @@ public class TestJournalNode {
     ch = new IPCLoggerChannel(conf, JID, jn.getBoundIpcAddress());
   }
   
-  @Before
-  public void setupOpBuffer() throws Exception {
+  private byte[] createTxnData(int startTxn, int numTxns) throws Exception {
     DataOutputBuffer buf = new DataOutputBuffer();
     FSEditLogOp.Writer writer = new FSEditLogOp.Writer(buf);
-    FSEditLogOp op = NameNodeAdapter.createMkdirOp("tx " + 1);
-    op.setTransactionId(1);
-    writer.writeOp(op);
-    op = NameNodeAdapter.createMkdirOp("tx " + 2);
-    op.setTransactionId(2);
-    writer.writeOp(op);
     
-    TWO_EDITS = Arrays.copyOf(buf.getData(), buf.getLength());
+    for (long txid = startTxn; txid < startTxn + numTxns; txid++) {
+      FSEditLogOp op = NameNodeAdapter.createMkdirOp("tx " + txid);
+      op.setTransactionId(txid);
+      writer.writeOp(op);
+    }
+    
+    return Arrays.copyOf(buf.getData(), buf.getLength());
   }
   
   @After
@@ -150,7 +155,7 @@ public class TestJournalNode {
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
-    ch.sendEdits(1, 2, TWO_EDITS).get();
+    ch.sendEdits(1, 2, createTxnData(1, 2)).get();
     
     // Switch to a new epoch without closing earlier segment
     NewEpochResponseProto response = ch.newEpoch(
@@ -185,22 +190,23 @@ public class TestJournalNode {
             "Hadoop:service=JournalNode,name=JvmMetrics"));
     
     // Create some edits on server side
+    byte[] EDITS_DATA = createTxnData(1, 3);
     IPCLoggerChannel ch = new IPCLoggerChannel(
         conf, JID, jn.getBoundIpcAddress());
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
-    ch.sendEdits(1, 2, TWO_EDITS).get();
-    ch.finalizeLogSegment(1, 2).get();
+    ch.sendEdits(1, 3, EDITS_DATA).get();
+    ch.finalizeLogSegment(1, 3).get();
 
     // Attempt to retrieve via HTTP, ensure we get the data back
     // including the header we expected
     byte[] retrievedViaHttp = DFSTestUtil.urlGetBytes(new URL(urlRoot +
-        "/getimage?filename=" + NNStorage.getFinalizedEditsFileName(1, 2) +
+        "/getimage?filename=" + NNStorage.getFinalizedEditsFileName(1, 3) +
         "&jid=" + JID));
     byte[] expected = Bytes.concat(
             Ints.toByteArray(HdfsConstants.LAYOUT_VERSION),
-            TWO_EDITS);
+            EDITS_DATA);
 
     assertArrayEquals(expected, retrievedViaHttp);
     
@@ -244,7 +250,7 @@ public class TestJournalNode {
     // Make a log segment, and prepare again -- this time should see the
     // segment existing.
     ch.startLogSegment(1L).get();
-    ch.sendEdits(1L, 1, "hello".getBytes(Charsets.UTF_8)).get();
+    ch.sendEdits(1L, 1, createTxnData(1, 1)).get();
 
     prep = ch.paxosPrepare(1L).get();
     System.err.println("Prep: " + prep);
@@ -280,6 +286,27 @@ public class TestJournalNode {
           "epoch 1 is less than the last promised epoch 2",
           ioe);
     }
+  }
+  
+  // TODO: move to a new test suite
+  @Test
+  public void testRestartJournal() throws Exception {
+    FileUtil.deleteContents(TEST_LOG_DIR);
+    
+    Journal j = new Journal(TEST_LOG_DIR, Mockito.mock(StorageErrorReporter.class));
+    j.newEpoch(FAKE_NSINFO, 1);
+    j.startLogSegment(new RequestInfo("j", 1, 1), 1);
+    j.journal(new RequestInfo("j", 1, 2), 1, 2, createTxnData(1, 2));
+    // Don't finalize.
+    
+    j.close(); // close to unlock the storage dir
+    
+    // Now re-instantiate, make sure history is still there
+    j = new Journal(TEST_LOG_DIR, Mockito.mock(StorageErrorReporter.class));
+    assertEquals(1, j.getLastPromisedEpoch());
+    NewEpochResponseProtoOrBuilder newEpoch = j.newEpoch(FAKE_NSINFO, 2);
+    assertEquals(1, newEpoch.getCurSegmentTxId());
+    
   }
   // TODO:
   // - add test that checks formatting behavior

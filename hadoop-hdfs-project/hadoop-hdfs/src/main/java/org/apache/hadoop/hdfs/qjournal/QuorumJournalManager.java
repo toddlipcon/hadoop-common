@@ -159,6 +159,13 @@ public class QuorumJournalManager implements JournalManager {
     }
     
     RemoteEditLogProto logToSync = bestResponse.getSegmentInfo();
+    
+    // TODO: we should not actually send the full file path here, but
+    // rather just the segment txid, and let the server serve it up.
+    // the problem is that we can overlap a slow logger synchronizing
+    // with the finalization on a fast one, so we ask for the
+    // in-progress segment, but it's already been renamed to the finalized
+    // segment
     URL syncFromUrl = buildURLToFetchLogs(
         bestLogger.getHostNameForHttpFetch(),
         bestResponse.getHttpPort(),
