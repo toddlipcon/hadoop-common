@@ -84,26 +84,47 @@ class JNStorage extends Storage {
       throw new IOException("Could not create paxos dir: " + getPaxosDir());
     }
   }
-
-  void formatIfEmpty(NamespaceInfo nsInfo) throws IOException {
-    // TODO: should verify equality, not blindly set!
-    // Also need to rename this func
+  
+  void analyzeStorage(NamespaceInfo nsInfo) throws IOException {
     if (lazyInitted) {
+      checkConsistentNamespace(nsInfo);
       return;
     }
     
-    setStorageInfo(nsInfo);
     StorageState state = sd.analyzeStorage(StartupOption.REGULAR, this);
     switch (state) {
     case NON_EXISTENT:
     case NOT_FORMATTED:
+      setStorageInfo(nsInfo);
       format();
       sd.lock();
       break;
+    case NORMAL:
+      // Storage directory is already locked by analyzeStorage()
+      readProperties(sd);
+      checkConsistentNamespace(nsInfo);
+      break;
+      
     default:
       LOG.warn("TODO: unhandled state for storage dir " + sd + ": " + state);
     }
     lazyInitted  = true;
+  }
+
+  private void checkConsistentNamespace(NamespaceInfo nsInfo)
+      throws IOException {
+    if (nsInfo.getNamespaceID() != getNamespaceID()) {
+      throw new IOException("Incompatible namespaceID for journal " +
+          this.sd + ": NameNode has nsId " + nsInfo.getNamespaceID() +
+          " but storage has nsId " + getNamespaceID());
+    }
+    
+    if (!nsInfo.getClusterID().equals(getClusterID())) {
+      throw new IOException("Incompatible clusterID for journal " +
+          this.sd + ": NameNode has clusterId '" + nsInfo.getClusterID() +
+          "' but storage has clusterId '" + getClusterID() + "'");
+      
+    }
   }
 
   public void close() throws IOException {

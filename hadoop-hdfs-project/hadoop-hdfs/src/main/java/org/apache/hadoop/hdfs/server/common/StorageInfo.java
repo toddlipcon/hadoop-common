@@ -17,12 +17,9 @@
  */
 package org.apache.hadoop.hdfs.server.common;
 
-import java.util.Comparator;
-
 import org.apache.hadoop.classification.InterfaceAudience;
 
 import com.google.common.base.Joiner;
-import com.google.common.collect.Ordering;
 
 /**
  * Common class for storage information.
@@ -91,15 +88,5 @@ public class StorageInfo {
   public String toColonSeparatedString() {
     return Joiner.on(":").join(
         layoutVersion, namespaceID, cTime, clusterID);
-  }
-  
-  @InterfaceAudience.Private
-  public static class CompareByNamespaceId implements Comparator<StorageInfo> {
-    @Override
-    public int compare(StorageInfo arg0, StorageInfo arg1) {
-      return Ordering.natural().compare(
-          arg0.getNamespaceID(),
-          arg1.getNamespaceID());
-    }
   }
 }

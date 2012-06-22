@@ -112,10 +112,10 @@ public class Journal implements Closeable {
       NamespaceInfo nsInfo, long epoch)
       throws IOException {
 
-    // TODO: we probably don't want to auto-format, but rather
-    // take some kind of NN startup flag or tool to do this.
-    storage.formatIfEmpty(nsInfo);
-
+    // If the storage is unformatted, format it with this NS.
+    // Otherwise, check that the NN's nsinfo matches the storage.
+    storage.analyzeStorage(nsInfo);
+    
     if (epoch <= getLastPromisedEpoch()) {
       throw new IOException("Proposed epoch " + epoch + " <= last promise " +
           getEpochInfo());

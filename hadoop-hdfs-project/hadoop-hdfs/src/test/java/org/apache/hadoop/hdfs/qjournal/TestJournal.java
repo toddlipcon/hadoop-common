@@ -41,6 +41,9 @@ import org.mockito.Mockito;
 public class TestJournal {
   private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
       12345, "mycluster", "my-bp", 0L, 0);
+  private static final NamespaceInfo FAKE_NSINFO_2 = new NamespaceInfo(
+      6789, "mycluster", "my-bp", 0L, 0);
+  
   private static final String JID = "test-journal";
 
   private static final File TEST_LOG_DIR = new File(
@@ -142,6 +145,19 @@ public class TestJournal {
     
     // Journal should no longer be locked after the close() call.
     journal2.newEpoch(FAKE_NSINFO, 2);
+  }
+  
+  @Test
+  public void testNamespaceVerification() throws Exception {
+    journal.newEpoch(FAKE_NSINFO, 1);
+
+    try {
+      journal.newEpoch(FAKE_NSINFO_2, 2);
+      fail("Did not fail newEpoch() when namespaces mismatched");
+    } catch (IOException ioe) {
+      GenericTestUtils.assertExceptionContains(
+          "Incompatible namespaceID", ioe);
+    }
   }
 
 }
