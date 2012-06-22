@@ -126,11 +126,17 @@ public class TestJournalNode {
     
     String urlRoot = "http://localhost:" + addr.getPort();
     
+    // Check default servlets.
     String pageContents = DFSTestUtil.urlGet(new URL(urlRoot + "/jmx"));
     assertTrue("Bad contents: " + pageContents,
         pageContents.contains(
             "Hadoop:service=JournalNode,name=JvmMetrics"));
     
+    // Check JSP page.
+    pageContents = DFSTestUtil.urlGet(
+        new URL(urlRoot + "/journalstatus.jsp"));
+    assertTrue(pageContents.contains("JournalNode"));
+
     // Create some edits on server side
     byte[] EDITS_DATA = QJMTestUtil.createTxnData(1, 3);
     IPCLoggerChannel ch = new IPCLoggerChannel(
@@ -166,8 +172,6 @@ public class TestJournalNode {
   /**
    * Test that the JournalNode performs correctly as a Paxos
    * <em>Acceptor</em> process.
-   * 
-   * @throws Exception
    */
   @Test
   public void testPaxosAcceptorBehavior() throws Exception {
