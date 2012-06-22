@@ -129,7 +129,7 @@ public class GetImageServlet extends HttpServlet {
             setFileNameHeaders(response, imageFile);
             setVerificationHeaders(response, imageFile);
             // send fsImage
-            TransferFsImage.getFileServer(response.getOutputStream(), imageFile,
+            TransferFsImage.getFileServer(response, imageFile,
                 getThrottler(conf)); 
           } else if (parsedParams.isGetEdit()) {
             long startTxId = parsedParams.getStartTxId();
@@ -141,7 +141,7 @@ public class GetImageServlet extends HttpServlet {
             
             setFileNameHeaders(response, editFile);
             // send edits
-            TransferFsImage.getFileServer(response.getOutputStream(), editFile,
+            TransferFsImage.getFileServer(response, editFile,
                 getThrottler(conf));
           } else if (parsedParams.isPutImage()) {
             final long txid = parsedParams.getTxId();

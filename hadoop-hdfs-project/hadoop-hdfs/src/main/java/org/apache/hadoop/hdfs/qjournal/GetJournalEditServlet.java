@@ -157,16 +157,10 @@ public class GetJournalEditServlet extends HttpServlet {
 
       // send edits
       FaultInjector.instance.beforeSendEdits();
-      ServletOutputStream output = response.getOutputStream();
-      try {
-        TransferFsImage.getFileServer(output, editFile, throttler);
-      } finally {
-        if (output != null)
-          output.close();
-      }
+      TransferFsImage.getFileServer(response, editFile, throttler);
 
-    } catch (Exception ie) {
-      String errMsg = "getedit failed. " + StringUtils.stringifyException(ie);
+    } catch (Throwable t) {
+      String errMsg = "getedit failed. " + StringUtils.stringifyException(t);
       response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, errMsg);
       throw new IOException(errMsg);
     }

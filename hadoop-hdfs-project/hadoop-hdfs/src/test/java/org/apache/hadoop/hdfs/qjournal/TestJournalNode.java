@@ -19,9 +19,12 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import static org.junit.Assert.*;
 
+import java.io.File;
 import java.io.IOException;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 
@@ -200,6 +203,16 @@ public class TestJournalNode {
             TWO_EDITS);
 
     assertArrayEquals(expected, retrievedViaHttp);
+    
+    // Attempt to fetch a non-existent file, check that we get an
+    // error status code
+    URL badUrl = new URL(urlRoot + "/getimage?filename=xxxDoesNotExist&jid=" + JID);
+    HttpURLConnection connection = (HttpURLConnection)badUrl.openConnection();
+    try {
+      assertEquals(500, connection.getResponseCode());
+    } finally {
+      connection.disconnect();
+    }
   }
 
   /**
