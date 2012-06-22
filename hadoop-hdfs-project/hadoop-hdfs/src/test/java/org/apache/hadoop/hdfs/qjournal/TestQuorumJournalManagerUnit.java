@@ -77,7 +77,6 @@ public class TestQuorumJournalManagerUnit {
       
       futureReturns(
           NewEpochResponseProto.newBuilder()
-            .setCurrentEpoch(0)
             .setHttpPort(1)
             .build()
           ).when(logger).newEpoch(

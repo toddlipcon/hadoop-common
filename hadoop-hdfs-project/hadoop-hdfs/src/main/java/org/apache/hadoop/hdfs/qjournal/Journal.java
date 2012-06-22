@@ -21,6 +21,7 @@ import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
 import org.apache.hadoop.hdfs.server.common.StorageErrorReporter;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
+import org.apache.hadoop.hdfs.server.namenode.FileJournalManager.EditLogFile;
 import org.apache.hadoop.hdfs.server.namenode.TransferFsImage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
@@ -28,7 +29,6 @@ import org.apache.hadoop.hdfs.util.AtomicFileOutputStream;
 import org.apache.hadoop.io.IOUtils;
 
 import com.google.common.base.Preconditions;
-import com.google.protobuf.ByteString;
 
 public class Journal implements Closeable {
   public static final Log LOG = LogFactory.getLog(Journal.class);
@@ -37,17 +37,12 @@ public class Journal implements Closeable {
   private EditLogOutputStream curSegment;
   private long curSegmentTxId = HdfsConstants.INVALID_TXID;
   private long nextTxId = HdfsConstants.INVALID_TXID;
-  // TODO: set me at startup
-  private boolean curSegmentFinalized = false;
   
-
   private final JNStorage storage;
 
   /** f_p in ZAB terminology */
   private PersistentLong lastPromisedEpoch;
-  
-  /** f_a in ZAB terminology */
-  private PersistentLong lastAcceptedEpoch;
+
   private final FileJournalManager fjm;
 
 
@@ -57,8 +52,7 @@ public class Journal implements Closeable {
     File currentDir = storage.getStorageDir(0).getCurrentDir();
     this.lastPromisedEpoch = new PersistentLong(
         new File(currentDir, "last-promised-epoch"), 0);
-    this.lastAcceptedEpoch = new PersistentLong(
-        new File(currentDir, "last-accepted-epoch"), 0);
+
     this.fjm = storage.getJournalManager();
   }
   
@@ -104,11 +98,10 @@ public class Journal implements Closeable {
     }
     
     NewEpochResponseProto.Builder builder =
-        NewEpochResponseProto.newBuilder()
-        .setCurrentEpoch(lastAcceptedEpoch.get());    
+        NewEpochResponseProto.newBuilder();
         
     if (curSegmentTxId != HdfsConstants.INVALID_TXID) {
-      builder.setLastSegment(getSegmentInfo(curSegmentTxId));
+      builder.setCurSegmentTxId(curSegmentTxId);
     }
     
     
@@ -166,34 +159,35 @@ public class Journal implements Closeable {
     curSegment = fjm.startLogSegment(txid);
     curSegmentTxId = txid;
     nextTxId = txid;
-    curSegmentFinalized = false;
   }
   
   public void finalizeLogSegment(RequestInfo reqInfo, long startTxId,
       long endTxId) throws IOException {
     checkRequest(reqInfo);
-    
+
     if (startTxId == curSegmentTxId) {
-      Preconditions.checkState(nextTxId == endTxId + 1,
-          "Trying to finalize current log segment (startTxId=%s) " +
-          "with ending txid=%s, but cur txid is %s",
-          curSegmentTxId, endTxId, nextTxId - 1);
       if (curSegment != null) {
         curSegment.close();
         curSegment = null;
       }
-      if (curSegmentFinalized) {
-        LOG.info("Received no-op request to finalize " +
-            "already-finalized segment " +
-            curSegmentTxId + "-" + endTxId);
-      } else {
-        fjm.finalizeLogSegment(startTxId, endTxId);
-        // TODO: add some sanity check here for non-overlapping edits
-        // in debug case?
-        curSegmentFinalized = true;
-      }
-    } else {
+    }
+    
+    FileJournalManager.EditLogFile elf = fjm.getLogFile(startTxId);
+    if (elf.isInProgress()) {
+      // TODO: this is slow to validate when in non-recovery cases
+      // we already know the length here!
+
+      LOG.info("Validating log about to be finalized: " + elf);
+      elf.validateLog();
+      
+      Preconditions.checkState(elf.getLastTxId() == endTxId,
+          "Trying to finalize log %s-%s, but current state of log" +
+          "is %s", startTxId, endTxId, elf);
       fjm.finalizeLogSegment(startTxId, endTxId);
+    } else {
+      Preconditions.checkArgument(endTxId == elf.getLastTxId(),
+          "Trying to re-finalize already finalized log " +
+              elf + " with different endTxId " + endTxId);
     }
   }
   
@@ -206,15 +200,26 @@ public class Journal implements Closeable {
     return manifest;
   }
     
-  private RemoteEditLogProto getSegmentInfo(long segmentTxId) {
-    Preconditions.checkArgument(segmentTxId == curSegmentTxId,
-        " TODO: need to handle this for other segments, " +
-        "cur: %s  asked for: %s", curSegmentTxId, segmentTxId);
-    return RemoteEditLogProto.newBuilder()
+  private RemoteEditLogProto getSegmentInfo(long segmentTxId)
+      throws IOException {
+    EditLogFile elf = fjm.getLogFile(segmentTxId);
+    if (elf == null) {
+      return null;
+    }
+    if (elf.isInProgress()) {
+      elf.validateLog();
+    }
+    if (elf.getLastTxId() == HdfsConstants.INVALID_TXID) {
+      // no transactions in file
+      throw new AssertionError("TODO");
+    }
+    RemoteEditLogProto ret = RemoteEditLogProto.newBuilder()
         .setStartTxId(segmentTxId)
-        .setEndTxId(nextTxId - 1)
-        .setIsInProgress(!curSegmentFinalized)
+        .setEndTxId(elf.getLastTxId())
+        .setIsInProgress(elf.isInProgress())
         .build();
+    LOG.info("getSegmentInfo(" + segmentTxId + "): " + elf + " -> " + ret);
+    return ret;
   }
 
 

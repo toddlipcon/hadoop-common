@@ -22,6 +22,7 @@ import static org.junit.Assert.*;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URL;
+import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 
 import org.apache.hadoop.conf.Configuration;
@@ -30,8 +31,11 @@ import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.RequestInfo;
+import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
+import org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
+import org.apache.hadoop.io.DataOutputBuffer;
 import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
@@ -47,6 +51,7 @@ public class TestJournalNode {
   private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
       12345, "mycluster", "my-bp", 0L, 0);
   private static final String JID = "test-journalid";
+  private byte[] TWO_EDITS;
 
   private JournalNode jn;
   private Journal journal; 
@@ -73,6 +78,20 @@ public class TestJournalNode {
     ch = new IPCLoggerChannel(conf, JID, jn.getBoundIpcAddress());
   }
   
+  @Before
+  public void setupOpBuffer() throws Exception {
+    DataOutputBuffer buf = new DataOutputBuffer();
+    FSEditLogOp.Writer writer = new FSEditLogOp.Writer(buf);
+    FSEditLogOp op = NameNodeAdapter.createMkdirOp("tx " + 1);
+    op.setTransactionId(1);
+    writer.writeOp(op);
+    op = NameNodeAdapter.createMkdirOp("tx " + 2);
+    op.setTransactionId(2);
+    writer.writeOp(op);
+    
+    TWO_EDITS = Arrays.copyOf(buf.getData(), buf.getLength());
+  }
+  
   @After
   public void teardown() throws Exception {
     jn.stop(0);
@@ -93,10 +112,10 @@ public class TestJournalNode {
     assertEquals(0, journal.getLastPromisedEpoch());
     NewEpochResponseProto.Builder newEpoch =
         journal.newEpoch(FAKE_NSINFO, 1);
-    assertFalse(newEpoch.hasLastSegment());
+    assertFalse(newEpoch.hasCurSegmentTxId());
     assertEquals(1, journal.getLastPromisedEpoch());
     journal.newEpoch(FAKE_NSINFO, 3);
-    assertFalse(newEpoch.hasLastSegment());
+    assertFalse(newEpoch.hasCurSegmentTxId());
     assertEquals(3, journal.getLastPromisedEpoch());
     try {
       journal.newEpoch(
@@ -128,33 +147,26 @@ public class TestJournalNode {
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
-    ch.sendEdits(1, 2, "hello".getBytes(Charsets.UTF_8)).get();
+    ch.sendEdits(1, 2, TWO_EDITS).get();
     
     // Switch to a new epoch without closing earlier segment
     NewEpochResponseProto response = ch.newEpoch(
         FAKE_NSINFO, 2).get();
     ch.setEpoch(2);
-    assertEquals(1, response.getLastSegment().getStartTxId());
-    assertEquals(2, response.getLastSegment().getEndTxId());
-    assertTrue(response.getLastSegment().getIsInProgress());
+    assertEquals(1, response.getCurSegmentTxId());
     
     ch.finalizeLogSegment(1, 2).get();
     
     // Switch to a new epoch after just closing the earlier segment.
-    // The response should now indicate the segment is closed.
     response = ch.newEpoch(FAKE_NSINFO, 3).get();
     ch.setEpoch(3);
-    assertEquals(1, response.getLastSegment().getStartTxId());
-    assertEquals(2, response.getLastSegment().getEndTxId());
-    assertFalse(response.getLastSegment().getIsInProgress());
+    assertEquals(1, response.getCurSegmentTxId());
     
     // Start a segment but don't write anything, check newEpoch segment info
     ch.startLogSegment(3).get();
     response = ch.newEpoch(FAKE_NSINFO, 4).get();
     ch.setEpoch(4);
-    assertEquals(3, response.getLastSegment().getStartTxId());
-    assertEquals(2, response.getLastSegment().getEndTxId());
-    assertTrue(response.getLastSegment().getIsInProgress());
+    assertEquals(3, response.getCurSegmentTxId());
   }
   
   @Test
@@ -175,18 +187,17 @@ public class TestJournalNode {
     ch.newEpoch(FAKE_NSINFO, 1).get();
     ch.setEpoch(1);
     ch.startLogSegment(1).get();
-    byte[] EDITS_DATA = "hello".getBytes(Charsets.UTF_8);
-    ch.sendEdits(1, 3, EDITS_DATA).get();
-    ch.finalizeLogSegment(1, 3).get();
+    ch.sendEdits(1, 2, TWO_EDITS).get();
+    ch.finalizeLogSegment(1, 2).get();
 
     // Attempt to retrieve via HTTP, ensure we get the data back
     // including the header we expected
     byte[] retrievedViaHttp = DFSTestUtil.urlGetBytes(new URL(urlRoot +
-        "/getimage?filename=" + NNStorage.getFinalizedEditsFileName(1, 3) +
+        "/getimage?filename=" + NNStorage.getFinalizedEditsFileName(1, 2) +
         "&jid=" + JID));
     byte[] expected = Bytes.concat(
             Ints.toByteArray(HdfsConstants.LAYOUT_VERSION),
-            EDITS_DATA);
+            TWO_EDITS);
 
     assertArrayEquals(expected, retrievedViaHttp);
   }

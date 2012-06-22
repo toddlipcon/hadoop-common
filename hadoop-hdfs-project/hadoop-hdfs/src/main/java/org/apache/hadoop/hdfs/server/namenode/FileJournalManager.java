@@ -40,6 +40,7 @@ import org.apache.hadoop.hdfs.server.namenode.NNStorage.NameNodeFile;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.ComparisonChain;
@@ -207,7 +208,7 @@ public class FileJournalManager implements JournalManager {
         try {
           long startTxId = Long.valueOf(inProgressEditsMatch.group(1));
           ret.add(
-              new EditLogFile(f, startTxId, startTxId, true));
+              new EditLogFile(f, startTxId, HdfsConstants.INVALID_TXID, true));
         } catch (NumberFormatException nfe) {
           LOG.error("In-progress edits file " + f + " has improperly " +
                     "formatted transaction ID");
@@ -320,6 +321,27 @@ public class FileJournalManager implements JournalManager {
 
     return logFiles;
   }
+  
+  public EditLogFile getLogFile(long startTxId) throws IOException {
+    List<EditLogFile> files = matchEditLogs(sd.getCurrentDir());
+    List<EditLogFile> ret = Lists.newLinkedList();
+    for (EditLogFile elf : files) {
+      if (elf.getFirstTxId() == startTxId) {
+        ret.add(elf);
+      }
+    }
+    
+    if (ret.isEmpty()) {
+      // no matches
+      return null;
+    } else if (ret.size() == 1) {
+      return ret.get(0);
+    } else {
+      throw new IllegalStateException("More than one log segment in " + 
+          this + " starting at txid " + startTxId + ": " +
+          Joiner.on(", ").join(ret));
+    }
+  }
 
   @Override
   public String toString() {
@@ -329,7 +351,8 @@ public class FileJournalManager implements JournalManager {
   /**
    * Record of an edit log that has been located and had its filename parsed.
    */
-  static class EditLogFile {
+  @InterfaceAudience.Private
+  public static class EditLogFile {
     private File file;
     private final long firstTxId;
     private long lastTxId;
@@ -361,17 +384,20 @@ public class FileJournalManager implements JournalManager {
       assert (firstTxId > 0) || (firstTxId == HdfsConstants.INVALID_TXID);
       assert file != null;
       
+      Preconditions.checkArgument(!isInProgress ||
+          lastTxId == HdfsConstants.INVALID_TXID);
+      
       this.firstTxId = firstTxId;
       this.lastTxId = lastTxId;
       this.file = file;
       this.isInProgress = isInProgress;
     }
     
-    long getFirstTxId() {
+    public long getFirstTxId() {
       return firstTxId;
     }
     
-    long getLastTxId() {
+    public long getLastTxId() {
       return lastTxId;
     }
     
@@ -384,13 +410,13 @@ public class FileJournalManager implements JournalManager {
      * This will update the lastTxId of the EditLogFile or
      * mark it as corrupt if it is.
      */
-    void validateLog() throws IOException {
+    public void validateLog() throws IOException {
       EditLogValidation val = EditLogFileInputStream.validateEditLog(file);
       this.lastTxId = val.getEndTxId();
       this.hasCorruptHeader = val.hasCorruptHeader();
     }
 
-    boolean isInProgress() {
+    public boolean isInProgress() {
       return isInProgress;
     }
 

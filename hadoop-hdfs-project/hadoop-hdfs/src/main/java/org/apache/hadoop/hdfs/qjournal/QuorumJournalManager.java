@@ -31,7 +31,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.PriorityQueue;
-import java.util.SortedSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -60,7 +59,6 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
 
 /**
  * A JournalManager that writes to a set of remote JournalNodes,
@@ -118,17 +116,18 @@ public class QuorumJournalManager implements JournalManager {
     LOG.info("newEpoch(" + getWriterEpoch() + ") responses:\n" +
         Joiner.on("\n").withKeyValueSeparator(": ").join(resps));
 
-    SortedSet<Long> segmentsNeedingRecovery = Sets.newTreeSet();
+    long mostRecentSegmentTxId = Long.MIN_VALUE;
     for (NewEpochResponseProto r : resps.values()) {
-      if (r.getLastSegment().getIsInProgress()) {
-        segmentsNeedingRecovery.add(r.getLastSegment().getStartTxId());
+      if (r.hasCurSegmentTxId()) {
+        mostRecentSegmentTxId = Math.max(mostRecentSegmentTxId,
+            r.getCurSegmentTxId());
       }
     }
-    
-    // TODO: there are probably a number of sanity-checks we can run
-    // against invariants here
-    if (!segmentsNeedingRecovery.isEmpty()) {
-      recoverUnclosedSegment(segmentsNeedingRecovery.last());
+
+    // On a completely fresh system, none of the journals have any
+    // segments, so there's nothing to recover.
+    if (mostRecentSegmentTxId != Long.MIN_VALUE) {
+      recoverUnclosedSegment(mostRecentSegmentTxId);
     }
     isActiveWriter = true;
   }
