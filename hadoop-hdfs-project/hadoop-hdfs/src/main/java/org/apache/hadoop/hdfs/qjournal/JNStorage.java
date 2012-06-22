@@ -81,6 +81,7 @@ class JNStorage extends Storage {
     case NON_EXISTENT:
     case NOT_FORMATTED:
       format();
+      sd.lock();
       break;
     default:
       LOG.warn("TODO: unhandled state for storage dir " + sd + ": " + state);
