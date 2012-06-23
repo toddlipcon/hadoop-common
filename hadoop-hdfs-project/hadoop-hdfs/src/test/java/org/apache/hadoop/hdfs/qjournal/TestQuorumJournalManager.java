@@ -27,6 +27,7 @@ import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
+import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
 import org.junit.Before;
@@ -40,6 +41,8 @@ import com.google.common.collect.Lists;
  * For true unit tests, see {@link TestQuorumJournalManagerUnit}.
  */
 public class TestQuorumJournalManager {
+  private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
+      12345, "mycluster", "my-bp", 0L, 0);
   private static final String JID = "testQuorumJournalManager";
   private MiniJournalCluster cluster;
   private Configuration conf;
@@ -60,7 +63,7 @@ public class TestQuorumJournalManager {
   @Test
   public void testSingleWriter() throws Exception {
     QuorumJournalManager qjm = new QuorumJournalManager(
-        conf, cluster.getQuorumJournalURI(JID));
+        conf, cluster.getQuorumJournalURI(JID), FAKE_NSINFO);
     qjm.recoverUnfinalizedSegments();
     assertEquals(1, qjm.getWriterEpoch());
 
@@ -84,7 +87,7 @@ public class TestQuorumJournalManager {
   @Test
   public void testChangeWritersLogsInSync() throws Exception {
     QuorumJournalManager qjm = new QuorumJournalManager(
-        conf, cluster.getQuorumJournalURI(JID));
+        conf, cluster.getQuorumJournalURI(JID), FAKE_NSINFO);
     qjm.recoverUnfinalizedSegments();
     writeSegment(qjm, 1, 3, false);
     assertExistsInQuorum(cluster,
@@ -92,7 +95,7 @@ public class TestQuorumJournalManager {
 
     // Make a new QJM
     qjm = new QuorumJournalManager(
-        conf, cluster.getQuorumJournalURI(JID));
+        conf, cluster.getQuorumJournalURI(JID), FAKE_NSINFO);
     qjm.recoverUnfinalizedSegments();
     assertExistsInQuorum(cluster,
         NNStorage.getFinalizedEditsFileName(1, 3));
@@ -176,7 +179,7 @@ public class TestQuorumJournalManager {
   private QuorumJournalManager createSpyingQJM()
       throws IOException, URISyntaxException {
     return new QuorumJournalManager(
-        conf, cluster.getQuorumJournalURI(JID)) {
+        conf, cluster.getQuorumJournalURI(JID), FAKE_NSINFO) {
           @Override
           protected List<AsyncLogger> createLoggers() throws IOException {
             LOG.info("===> make spies");

@@ -51,6 +51,9 @@ public class TestQuorumJournalManagerUnit {
   static {
     ((Log4JLogger)QuorumJournalManager.LOG).getLogger().setLevel(Level.ALL);
   }
+  private static final NamespaceInfo FAKE_NSINFO = new NamespaceInfo(
+      12345, "mycluster", "my-bp", 0L, 0);
+
   private Configuration conf = new Configuration();
   private List<AsyncLogger> spyLoggers;
   private QuorumJournalManager qjm;
@@ -62,7 +65,7 @@ public class TestQuorumJournalManagerUnit {
         mockLogger(),
         mockLogger());
 
-    qjm = new QuorumJournalManager(conf, new URI("qjournal://host/jid")) {
+    qjm = new QuorumJournalManager(conf, new URI("qjournal://host/jid"), FAKE_NSINFO) {
       @Override
       protected List<AsyncLogger> createLoggers() {
         return spyLoggers;

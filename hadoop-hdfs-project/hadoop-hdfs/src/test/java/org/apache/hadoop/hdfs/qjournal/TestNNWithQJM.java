@@ -21,10 +21,14 @@ import static org.junit.Assert.*;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Mockito.doNothing;
 
+import java.io.File;
 import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.RawLocalFileSystem;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
@@ -85,8 +89,13 @@ public class TestNNWithQJM {
   
   @Test
   public void testNewNamenodeTakesOverWriter() throws Exception {
-    conf.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
+    File nn1Dir = new File(
         MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn1");
+    File nn2Dir = new File(
+        MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn2");
+    
+    conf.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
+        nn1Dir.getAbsolutePath());
     conf.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
         mjc.getQuorumJournalURI("myjournal").toString());
     
@@ -101,14 +110,21 @@ public class TestNNWithQJM {
     try {
       cluster.getFileSystem().mkdirs(TEST_PATH);
       
-      // Start a second NN pointed to the same quorum
+      // Start a second NN pointed to the same quorum.
+      // We need to copy the image dir from the first NN -- or else
+      // the new NN will just be rejected because of Namespace mismatch.
+      FileUtil.fullyDelete(nn2Dir);
+      FileUtil.copy(nn1Dir, FileSystem.getLocal(conf).getRaw(),
+          new Path(nn2Dir.getAbsolutePath()), false, conf);
+      
       Configuration conf2 = new Configuration();
       conf2.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
-          MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image-nn2");
+          nn2Dir.getAbsolutePath());
       conf2.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
           mjc.getQuorumJournalURI("myjournal").toString());
       MiniDFSCluster cluster2 = new MiniDFSCluster.Builder(conf2)
         .numDataNodes(0)
+        .format(false)
         .manageNameDfsDirs(false)
         .build();
       

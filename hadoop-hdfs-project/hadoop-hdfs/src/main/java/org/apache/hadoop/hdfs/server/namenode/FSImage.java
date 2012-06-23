@@ -126,12 +126,6 @@ public class FSImage implements Closeable {
     }
 
     this.editLog = new FSEditLog(conf, storage, editsDirs);
-    String nameserviceId = DFSUtil.getNamenodeNameServiceId(conf);
-    if (!HAUtil.isHAEnabled(conf, nameserviceId)) {
-      editLog.initJournalsForWrite();
-    } else {
-      editLog.initSharedJournalsForRead();
-    }
     
     archivalManager = new NNStorageRetentionManager(conf, storage, editLog);
   }
@@ -145,6 +139,7 @@ public class FSImage implements Closeable {
     NamespaceInfo ns = NNStorage.newNamespaceInfo();
     ns.clusterID = clusterId;
     storage.format(ns);
+    editLog.format();
     saveFSImageInAllDirs(fsn, 0);
   }
   
@@ -511,6 +506,7 @@ public class FSImage implements Closeable {
     // return back the real image
     realImage.getStorage().setStorageInfo(ckptImage.getStorage());
     realImage.getEditLog().setNextTxId(ckptImage.getEditLog().getLastWrittenTxId()+1);
+    realImage.initEditLog();
 
     target.dir.fsImage = realImage;
     realImage.getStorage().setBlockPoolID(ckptImage.getBlockPoolID());
@@ -575,7 +571,7 @@ public class FSImage implements Closeable {
   boolean loadFSImage(FSNamesystem target, MetaRecoveryContext recovery)
       throws IOException {
     FSImageStorageInspector inspector = storage.readAndInspectDirs();
-    
+
     isUpgradeFinalized = inspector.isUpgradeFinalized();
  
     FSImageStorageInspector.FSImageFile imageFile 
@@ -584,6 +580,10 @@ public class FSImage implements Closeable {
 
     Iterable<EditLogInputStream> editStreams = null;
 
+    // TODO: can we grab nsid from target directly?
+    initEditLog();
+
+    
     if (editLog.isOpenForWrite()) {
       // We only want to recover streams if we're going into Active mode.
       editLog.recoverUnclosedStreams();
@@ -645,6 +645,17 @@ public class FSImage implements Closeable {
     return needToSave;
   }
 
+
+  private void initEditLog() {
+    Preconditions.checkState(getNamespaceID() != 0,
+        "Must know namespace ID before initting edit log");
+    String nameserviceId = DFSUtil.getNamenodeNameServiceId(conf);
+    if (!HAUtil.isHAEnabled(conf, nameserviceId)) {
+      editLog.initJournalsForWrite();
+    } else {
+      editLog.initSharedJournalsForRead();
+    }
+  }
 
   /**
    * @param imageFile the image file that was loaded

@@ -1094,4 +1094,13 @@ public class NNStorage extends Storage implements Closeable, StorageErrorReporte
     inspectStorageDirs(inspector);
     return inspector;
   }
+
+  public NamespaceInfo getNamespaceInfo() {
+    return new NamespaceInfo(
+        getNamespaceID(),
+        getClusterID(),
+        getBlockPoolID(),
+        getCTime(),
+        getDistributedUpgradeVersion());
+  }
 }

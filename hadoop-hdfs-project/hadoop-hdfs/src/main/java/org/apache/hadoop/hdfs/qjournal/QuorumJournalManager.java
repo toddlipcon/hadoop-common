@@ -79,10 +79,8 @@ public class QuorumJournalManager implements JournalManager {
   private final AsyncLoggerSet loggers;
 
   
-
-  
   public QuorumJournalManager(Configuration conf,
-      URI uri) throws IOException {
+      URI uri, NamespaceInfo nsInfo) throws IOException {
     Preconditions.checkArgument(conf != null, "must be configured");
 
     this.conf = conf;
@@ -94,9 +92,7 @@ public class QuorumJournalManager implements JournalManager {
     this.journalId = path.substring(1);
     checkJournalId(journalId);
     
-    // TODO: need to plumb namespace info in here from NN/Storage
-    this.nsInfo = new NamespaceInfo(12345, "fake-cluster", "fake-bp", 1L, 1);
-    
+    this.nsInfo = nsInfo;
     this.loggers = new AsyncLoggerSet(createLoggers());
   }
   
