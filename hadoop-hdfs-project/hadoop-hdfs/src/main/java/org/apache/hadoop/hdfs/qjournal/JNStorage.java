@@ -28,8 +28,6 @@ import org.apache.hadoop.hdfs.server.namenode.FileJournalManager;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 
-import com.google.common.base.Preconditions;
-
 class JNStorage extends Storage {
 
   private final FileJournalManager fjm;

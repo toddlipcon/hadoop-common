@@ -56,8 +56,9 @@ class IPCLoggerChannel implements AsyncLogger {
   private final Configuration conf;
   private final InetSocketAddress addr;
   private QJournalProtocol proxy;
-  //private JournalSyncProtocol syncProxy; TODO
-  
+
+  // TODO: keep track of the amount of queued data to the
+  // executor and start throwing exceptions if it's too far behind.
   private final ListeningExecutorService executor;
   private long ipcSerial = 0;
   private long epoch = -1;
