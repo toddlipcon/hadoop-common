@@ -150,6 +150,13 @@ public class Journal implements Closeable {
   public synchronized void journal(RequestInfo reqInfo, long firstTxnId,
       int numTxns, byte[] records) throws IOException {
     checkRequest(reqInfo);
+    
+    // TODO: if a JN goes down and comes back up, then it will throw
+    // this exception on every edit. We should instead send back
+    // a response indicating the log needs to be rolled, which would
+    // mark the logger on the client side as "pending" -- and have the
+    // NN code look for this condition and trigger a roll when it happens.
+    // That way the node can catch back up and rejoin
     Preconditions.checkState(curSegment != null,
         "Can't write, no segment open");
     Preconditions.checkState(nextTxId == firstTxnId,
