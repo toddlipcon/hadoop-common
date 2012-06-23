@@ -130,4 +130,30 @@ public class TestNNWithQJM {
     }
   }
 
+  @Test
+  public void testMismatchedNNIsRejected() throws Exception {
+    conf.set(DFSConfigKeys.DFS_NAMENODE_NAME_DIR_KEY,
+        MiniDFSCluster.getBaseDirectory() + "/TestNNWithQJM/image");
+    conf.set(DFSConfigKeys.DFS_NAMENODE_EDITS_DIR_KEY,
+        mjc.getQuorumJournalURI("myjournal").toString());
+    
+    // Start a NN, so the storage is formatted with its namespace info. 
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+      .numDataNodes(0)
+      .manageNameDfsDirs(false)
+      .build();
+    cluster.shutdown();
+    
+    // Create a new (freshly-formatted) NN, which should not be able to
+    // reuse the same journal, since its journal ID would not match.
+    try {
+      cluster = new MiniDFSCluster.Builder(conf)
+        .numDataNodes(0)
+        .manageNameDfsDirs(false)
+        .build();
+      fail("New NN with different namespace should have been rejected");
+    } catch (IOException ioe) {
+      
+    }
+  }
 }
