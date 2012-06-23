@@ -33,7 +33,6 @@ import org.apache.hadoop.hdfs.DFSTestUtil;
 import org.apache.hadoop.hdfs.protocol.HdfsConstants;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.NewEpochResponseProto;
 import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.PaxosPrepareResponseProto;
-import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.test.GenericTestUtils;
@@ -69,9 +68,7 @@ public class TestJournalNode {
     jn.setConf(conf);
     jn.start();
     journal = jn.getOrCreateJournal(JID);
-    // TODO: this should not have to be done explicitly in the unit
-    // test, really, I dont think..
-    journal.format();
+    journal.format(FAKE_NSINFO);
     
     ch = new IPCLoggerChannel(conf, JID, jn.getBoundIpcAddress());
   }
@@ -150,8 +147,7 @@ public class TestJournalNode {
     // Attempt to retrieve via HTTP, ensure we get the data back
     // including the header we expected
     byte[] retrievedViaHttp = DFSTestUtil.urlGetBytes(new URL(urlRoot +
-        "/getimage?filename=" + NNStorage.getFinalizedEditsFileName(1, 3) +
-        "&jid=" + JID));
+        "/getimage?segmentTxId=1&jid=" + JID));
     byte[] expected = Bytes.concat(
             Ints.toByteArray(HdfsConstants.LAYOUT_VERSION),
             EDITS_DATA);
@@ -160,10 +156,10 @@ public class TestJournalNode {
     
     // Attempt to fetch a non-existent file, check that we get an
     // error status code
-    URL badUrl = new URL(urlRoot + "/getimage?filename=xxxDoesNotExist&jid=" + JID);
+    URL badUrl = new URL(urlRoot + "/getimage?segmentTxId=12345&jid=" + JID);
     HttpURLConnection connection = (HttpURLConnection)badUrl.openConnection();
     try {
-      assertEquals(500, connection.getResponseCode());
+      assertEquals(404, connection.getResponseCode());
     } finally {
       connection.disconnect();
     }

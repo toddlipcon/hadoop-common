@@ -47,7 +47,6 @@ import org.apache.hadoop.hdfs.server.namenode.EditLogOutputStream;
 import org.apache.hadoop.hdfs.server.namenode.JournalManager;
 import org.apache.hadoop.hdfs.server.namenode.JournalSet;
 import org.apache.hadoop.hdfs.server.namenode.LocalOrRemoteEditLog;
-import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.protocol.NamespaceInfo;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLog;
 import org.apache.hadoop.hdfs.server.protocol.RemoteEditLogManifest;
@@ -136,6 +135,9 @@ public class QuorumJournalManager implements JournalManager {
     
     Map<AsyncLogger, PaxosPrepareResponseProto> prepareResponses =
         loggers.prepareRecovery(segmentTxId);
+
+    LOG.info("Recovery prepare phase complete. Responses: " +
+        Joiner.on("\n").withKeyValueSeparator(": ").join(prepareResponses));
     
     Entry<AsyncLogger, PaxosPrepareResponseProto> bestEntry = Collections.max(
         prepareResponses.entrySet(), RECOVERY_COMPARATOR); 
@@ -155,19 +157,21 @@ public class QuorumJournalManager implements JournalManager {
     }
     
     RemoteEditLogProto logToSync = bestResponse.getSegmentInfo();
+    assert segmentTxId == logToSync.getStartTxId();
     
     // TODO: we should not actually send the full file path here, but
     // rather just the segment txid, and let the server serve it up.
     // the problem is that we can overlap a slow logger synchronizing
     // with the finalization on a fast one, so we ask for the
     // in-progress segment, but it's already been renamed to the finalized
-    // segment
+    // segment.
+    // ^^^^ This has now been addressed, but maybe we should get a system
+    // test for it.
     URL syncFromUrl = buildURLToFetchLogs(
         bestLogger.getHostNameForHttpFetch(),
         bestResponse.getHttpPort(),
-        PBHelper.convert(bestResponse.getSegmentInfo()));
+        segmentTxId);
     
-    assert segmentTxId == logToSync.getStartTxId();
     loggers.acceptRecovery(logToSync, syncFromUrl);
     
     // Write a test case for this condition, which I think should work now:
@@ -334,7 +338,7 @@ public class QuorumJournalManager implements JournalManager {
       
       for (RemoteEditLog remoteLog : manifest.getLogs()) {
         URL url = buildURLToFetchLogs(logger.getHostNameForHttpFetch(),
-            response.getHttpPort(), remoteLog);
+            response.getHttpPort(), remoteLog.getStartTxId());
         LOG.info("URL: " + url);
 
         EditLogInputStream elis = new EditLogFileInputStream(
@@ -349,17 +353,14 @@ public class QuorumJournalManager implements JournalManager {
   }
   
   private URL buildURLToFetchLogs(String hostname, int httpPort,
-      RemoteEditLog segment) {
-    Preconditions.checkArgument(segment.getStartTxId() > 0 &&
-        (segment.isInProgress() ||
-            segment.getEndTxId() > 0),
-        "Invalid segment: %s", segment);
+      long segmentTxId) {
+    Preconditions.checkArgument(segmentTxId > 0,
+        "Invalid segment: %s", segmentTxId);
         
     try {
       StringBuilder path = new StringBuilder("/getimage?");
       path.append("jid=").append(URLEncoder.encode(journalId, "UTF-8"));
-      path.append("&filename=")
-          .append(URLEncoder.encode(getLogFilename(segment), "UTF-8"));
+      path.append("&segmentTxId=").append(segmentTxId);
       path.append("&storageinfo=")
           .append(URLEncoder.encode(nsInfo.toColonSeparatedString(), "UTF-8"));
       return new URL("http", hostname, httpPort, path.toString());
@@ -369,16 +370,6 @@ public class QuorumJournalManager implements JournalManager {
     } catch (UnsupportedEncodingException e) {
       // should never get here -- everyone supports UTF-8.
       throw new RuntimeException(e);
-    }
-  }
-
-  private String getLogFilename(RemoteEditLog segment) {
-    if (segment.isInProgress()) {
-      return NNStorage.getInProgressEditsFileName(
-          segment.getStartTxId());
-    } else {
-      return NNStorage.getFinalizedEditsFileName(
-          segment.getStartTxId(), segment.getEndTxId());
     }
   }
 

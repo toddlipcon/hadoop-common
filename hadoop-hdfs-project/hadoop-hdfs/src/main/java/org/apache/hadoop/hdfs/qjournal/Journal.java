@@ -86,10 +86,10 @@ public class Journal implements Closeable {
     }
   }
 
-  synchronized void format() throws IOException {
-    storage.format();
+  void format(NamespaceInfo nsInfo) throws IOException {
+    storage.format(nsInfo);
   }
-  
+
   public void close() throws IOException {
     storage.close();
   }
@@ -406,4 +406,5 @@ public class Journal implements Closeable {
       }
     }
   }
+
 }

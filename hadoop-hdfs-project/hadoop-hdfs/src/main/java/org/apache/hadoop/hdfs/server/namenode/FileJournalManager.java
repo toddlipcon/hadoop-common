@@ -420,7 +420,7 @@ public class FileJournalManager implements JournalManager {
       return isInProgress;
     }
 
-    File getFile() {
+    public File getFile() {
       return file;
     }
     

@@ -19,7 +19,6 @@ package org.apache.hadoop.hdfs.qjournal;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.List;
 
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
@@ -33,7 +32,9 @@ import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.server.common.JspHelper;
+import org.apache.hadoop.hdfs.server.namenode.FileJournalManager.EditLogFile;
 import org.apache.hadoop.hdfs.server.namenode.GetImageServlet;
+import org.apache.hadoop.hdfs.server.namenode.GetImageServlet.GetImageParams;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.hdfs.server.namenode.TransferFsImage;
 import org.apache.hadoop.hdfs.util.DataTransferThrottler;
@@ -53,9 +54,8 @@ public class GetJournalEditServlet extends HttpServlet {
   private static final Log LOG = LogFactory.getLog(GetJournalEditServlet.class);
 
   private static final String STORAGEINFO_PARAM = "storageInfo";
-  private static final String FILENAME_PARAM = "filename";
   private static final String JOURNAL_ID_PARAM = "jid";
-
+  private static final String SEGMENT_TXID_PARAM = "segmentTxId";
 
   // TODO: create security tests
   protected boolean isValidRequestor(String remoteUser, Configuration conf)
@@ -143,11 +143,21 @@ public class GetJournalEditServlet extends HttpServlet {
       if (!checkStorageInfoOrSendError(storage, request, response)) {
         return;
       }
+      
+      long segmentTxId = GetImageParams.parseLongParam(request,
+          SEGMENT_TXID_PARAM);
 
-      String filename = getFileNameParam(request);
-      List<File> editFiles = storage.getFiles(null, filename);
-      assert editFiles.size() == 1;
-      File editFile = editFiles.get(0);
+      // TODO: technically we should sychronize against something here
+      // because the file could get finalized in between us locating it
+      // and us opening it.
+      EditLogFile elf = storage.getJournalManager().getLogFile(
+          segmentTxId);
+      if (elf == null) {
+        response.sendError(HttpServletResponse.SC_NOT_FOUND,
+            "No edit log found starting at txid " + segmentTxId);
+        return;
+      }
+      File editFile = elf.getFile();
 
       GetImageServlet.setVerificationHeaders(response, editFile);
       GetImageServlet.setFileNameHeaders(response, editFile);
@@ -165,18 +175,6 @@ public class GetJournalEditServlet extends HttpServlet {
     }
   }
 
-  private String getFileNameParam(HttpServletRequest request) {
-    String ret = request.getParameter(FILENAME_PARAM);
-    if (ret == null) {
-      throw new IllegalArgumentException(
-          "No filename parameter passed");
-    }
-    if (ret.isEmpty() || ret.contains("/")) {
-      throw new IllegalArgumentException("illegal filename: " + ret);
-    }
-    return ret;
-  }
-  
   /**
    * Static nested class only for fault injection. Typical usage of this class
    * is to make a Mockito object of this class, and then use the Mackito object
