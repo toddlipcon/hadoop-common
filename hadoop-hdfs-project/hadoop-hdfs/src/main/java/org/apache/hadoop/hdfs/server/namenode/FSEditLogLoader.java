@@ -496,10 +496,16 @@ public class FSEditLogLoader {
       long recentOpcodeOffsets[], long txid) {
     StringBuilder sb = new StringBuilder();
     sb.append("Error replaying edit log at offset " + in.getPosition());
-    sb.append(".  Expected transaction ID was ").append(txid);
+    sb.append(".  Expected transaction ID was ").append(txid).append("\n");
+    sb.append(formatOpCodeOffsets(recentOpcodeOffsets));
+    return sb.toString();
+  }
+  
+  public static String formatOpCodeOffsets(long[] recentOpcodeOffsets) {
+    StringBuilder sb = new StringBuilder();
     if (recentOpcodeOffsets[0] != -1) {
       Arrays.sort(recentOpcodeOffsets);
-      sb.append("\nRecent opcode offsets:");
+      sb.append("Recent opcode offsets:");
       for (long offset : recentOpcodeOffsets) {
         if (offset != -1) {
           sb.append(' ').append(offset);

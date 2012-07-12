@@ -18,12 +18,14 @@
 package org.apache.hadoop.hdfs.tools.offlineEditsViewer;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.hdfs.tools.offlineEditsViewer.OfflineEditsViewer;
+import org.apache.hadoop.hdfs.server.namenode.FSEditLogLoader;
 import org.apache.hadoop.hdfs.server.namenode.FSEditLogOp;
 
 import org.apache.hadoop.hdfs.server.namenode.EditLogInputStream;
@@ -60,11 +62,30 @@ class OfflineEditsBinaryLoader implements OfflineEditsLoader {
   @Override
   public void loadEdits() throws IOException {
     visitor.start(inputStream.getVersion());
+    
+    long recentOpcodeOffsets[] = new long[4];
+    Arrays.fill(recentOpcodeOffsets, -1);
+    int numEdits = 0;
     while (true) {
       try {
-        FSEditLogOp op = inputStream.readOp();
+        long opPos = inputStream.getPosition(); 
+        recentOpcodeOffsets[(int)(numEdits % recentOpcodeOffsets.length)] =
+            opPos;
+        boolean success = false;
+        FSEditLogOp op;
+        try {
+          op = inputStream.readOp();
+          success = true;
+        } finally {
+          if (!success) {
+            LOG.error("Failed to read op at position " + opPos + "\n" +
+                FSEditLogLoader.formatOpCodeOffsets(recentOpcodeOffsets));
+          }
+        }
         if (op == null)
           break;
+        numEdits++;
+
         if (fixTxIds) {
           if (nextTxId <= 0) {
             nextTxId = op.getTransactionId();
