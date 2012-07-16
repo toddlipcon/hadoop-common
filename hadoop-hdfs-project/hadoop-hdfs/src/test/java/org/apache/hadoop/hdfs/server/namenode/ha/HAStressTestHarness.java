@@ -17,6 +17,7 @@
  */
 package org.apache.hadoop.hdfs.server.namenode.ha;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
 
@@ -108,6 +109,7 @@ public class HAStressTestHarness {
         System.err.println("==============================\n" +
             "Failing over from 0->1\n" +
             "==================================");
+        System.err.println("FDs: " + new File("/proc/self/fdinfo").list().length);
         cluster.transitionToStandby(0);
         cluster.transitionToActive(1);
         
@@ -118,6 +120,7 @@ public class HAStressTestHarness {
 
         cluster.transitionToStandby(1);
         cluster.transitionToActive(0);
+        System.err.println("FDs: " + new File("/proc/self/fdinfo").list().length);
         Thread.sleep(msBetweenFailovers);
       }
     });

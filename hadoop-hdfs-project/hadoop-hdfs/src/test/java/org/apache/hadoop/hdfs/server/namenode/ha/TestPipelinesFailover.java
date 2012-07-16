@@ -83,7 +83,7 @@ public class TestPipelinesFailover {
   private static final int BLOCK_SIZE = 4096;
   private static final int BLOCK_AND_A_HALF = BLOCK_SIZE * 3 / 2;
   
-  private static final int STRESS_NUM_THREADS = 25;
+  private static final int STRESS_NUM_THREADS = 1;
   private static final int STRESS_RUNTIME = 40000;
   
   enum TestScenario {
