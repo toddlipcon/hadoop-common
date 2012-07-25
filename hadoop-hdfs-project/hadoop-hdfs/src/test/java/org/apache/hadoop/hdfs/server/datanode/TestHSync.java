@@ -23,6 +23,7 @@ import static org.apache.hadoop.test.MetricsAsserts.getMetrics;
 import java.util.EnumSet;
 import java.util.Random;
 
+import org.apache.commons.logging.impl.Log4JLogger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.CreateFlag;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -30,6 +31,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.AppendTestUtil;
+import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.io.RandomDatum;
@@ -37,10 +39,14 @@ import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.SequenceFile.CompressionType;
 import org.apache.hadoop.io.SequenceFile.Writer;
 import org.apache.hadoop.io.compress.DefaultCodec;
+import org.apache.log4j.Level;
 import org.junit.Test;
 
 public class TestHSync {
-  
+  static {
+    ((Log4JLogger)DFSClient.LOG).getLogger().setLevel(Level.ALL);
+  }
+
   private void checkSyncMetric(MiniDFSCluster cluster, int dn, long value) {
     DataNode datanode = cluster.getDataNodes().get(dn);
     assertCounter("FsyncCount", value, getMetrics(datanode.getMetrics().name()));    
@@ -76,6 +82,8 @@ public class TestHSync {
     out.hflush();
     // hflush still does not sync
     checkSyncMetric(cluster, 2);
+    
+    DFSClient.LOG.info("===> close");
     out.close();
     // close is sync'ing
     checkSyncMetric(cluster, 3);

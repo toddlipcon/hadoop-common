@@ -51,6 +51,7 @@ import org.apache.hadoop.hdfs.util.DataTransferThrottler;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.nativeio.NativeIO;
 import org.apache.hadoop.net.SocketInputWrapper;
+import org.apache.hadoop.net.SocketOutputStream;
 import org.apache.hadoop.util.Daemon;
 import org.apache.hadoop.util.DataChecksum;
 
@@ -88,7 +89,7 @@ class BlockReceiver implements Closeable {
   protected final String inAddr;
   protected final String myAddr;
   private String mirrorAddr;
-  private DataOutputStream mirrorOut;
+  private SocketOutputStream mirrorOut;
   private Daemon responder = null;
   private DataTransferThrottler throttler;
   private ReplicaOutputStreams streams;
@@ -512,7 +513,7 @@ class BlockReceiver implements Closeable {
       
       try {
         long onDiskLen = replicaInfo.getBytesOnDisk();
-        if (onDiskLen<offsetInBlock) {
+        if (onDiskLen<offsetInBlock || syncBlock) {
           //finally write to the disk :
           
           if (onDiskLen % bytesPerChecksum != 0) { 
@@ -627,7 +628,7 @@ class BlockReceiver implements Closeable {
   }
 
   void receiveBlock(
-      DataOutputStream mirrOut, // output to next datanode
+      SocketOutputStream mirrOut, // output to next datanode
       DataInputStream mirrIn,   // input from next datanode
       DataOutputStream replyOut,  // output to previous datanode
       String mirrAddr, DataTransferThrottler throttlerArg,

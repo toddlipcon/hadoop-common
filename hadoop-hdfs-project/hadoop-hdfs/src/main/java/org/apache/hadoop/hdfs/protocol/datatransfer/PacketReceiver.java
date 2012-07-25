@@ -29,6 +29,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.hdfs.util.DirectBufferPool;
 import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.net.SocketOutputStream;
 
 import com.google.common.base.Preconditions;
 import com.google.common.primitives.Ints;
@@ -194,16 +195,21 @@ public class PacketReceiver implements Closeable {
   /**
    * Rewrite the last-read packet on the wire to the given output stream.
    */
-  public void mirrorPacketTo(DataOutputStream mirrorOut) throws IOException {
-    Preconditions.checkState(!useDirectBuffers,
-        "Currently only supported for non-direct buffers");
+  public void mirrorPacketTo(SocketOutputStream mirrorOut) throws IOException {
     assert lengthPrefixBuf.capacity() == PacketHeader.PKT_LENGTHS_LEN;
-    mirrorOut.write(lengthPrefixBuf.array(),
-        lengthPrefixBuf.arrayOffset(),
-        lengthPrefixBuf.capacity());
-    mirrorOut.write(curPacketBuf.array(),
-        curPacketBuf.arrayOffset(),
-        curPacketBuf.remaining());
+    
+    if (!useDirectBuffers) {
+      mirrorOut.write(lengthPrefixBuf.array(),
+          lengthPrefixBuf.arrayOffset(),
+          lengthPrefixBuf.capacity());
+      mirrorOut.write(curPacketBuf.array(),
+          curPacketBuf.arrayOffset(),
+          curPacketBuf.remaining());
+    } else {
+      lengthPrefixBuf.flip();
+      mirrorOut.write(lengthPrefixBuf);
+      mirrorOut.write(curPacketBuf);
+    }
   }
 
   

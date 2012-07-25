@@ -61,6 +61,7 @@ import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.MD5Hash;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.net.SocketInputWrapper;
+import org.apache.hadoop.net.SocketOutputStream;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.DataChecksum;
@@ -351,7 +352,7 @@ class DataXceiver extends Receiver implements Runnable {
     checkAccess(replyOut, isClient, block, blockToken,
         Op.WRITE_BLOCK, BlockTokenSecretManager.AccessMode.WRITE);
 
-    DataOutputStream mirrorOut = null;  // stream to next target
+    SocketOutputStream mirrorOut = null;  // stream to next target
     DataInputStream mirrorIn = null;    // reply from next target
     Socket mirrorSock = null;           // socket to next target
     BlockReceiver blockReceiver = null; // responsible for data handling
@@ -388,16 +389,14 @@ class DataXceiver extends Receiver implements Runnable {
           NetUtils.connect(mirrorSock, mirrorTarget, timeoutValue);
           mirrorSock.setSoTimeout(timeoutValue);
           mirrorSock.setSendBufferSize(HdfsConstants.DEFAULT_DATA_SOCKET_SIZE);
-          mirrorOut = new DataOutputStream(
-             new BufferedOutputStream(
-                         NetUtils.getOutputStream(mirrorSock, writeTimeout),
-                         HdfsConstants.SMALL_BUFFER_SIZE));
+          mirrorOut = (SocketOutputStream) NetUtils.getOutputStream(mirrorSock, writeTimeout);
           mirrorIn = new DataInputStream(NetUtils.getInputStream(mirrorSock));
 
-          new Sender(mirrorOut).writeBlock(originalBlock, blockToken,
+          DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(mirrorOut));
+          new Sender(dos).writeBlock(originalBlock, blockToken,
               clientname, targets, srcDataNode, stage, pipelineSize,
               minBytesRcvd, maxBytesRcvd, latestGenerationStamp, requestedChecksum);
-
+          dos.flush();
           mirrorOut.flush();
 
           // read connect ack (only for clients, not for replication req)
