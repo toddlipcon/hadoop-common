@@ -28,6 +28,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.zip.Checksum;
@@ -49,6 +50,7 @@ import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
 import org.apache.hadoop.hdfs.util.DataTransferThrottler;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.nativeio.NativeIO;
+import org.apache.hadoop.net.SocketInputWrapper;
 import org.apache.hadoop.util.Daemon;
 import org.apache.hadoop.util.DataChecksum;
 
@@ -63,7 +65,7 @@ class BlockReceiver implements Closeable {
 
   private static final long CACHE_DROP_LAG_BYTES = 8 * 1024 * 1024;
   
-  private DataInputStream in = null; // from where data are read
+  private SocketInputWrapper in = null; // from where data are read
   private DataChecksum clientChecksum; // checksum used by client
   private DataChecksum diskChecksum; // checksum we write to disk
   
@@ -81,7 +83,7 @@ class BlockReceiver implements Closeable {
   private int checksumSize;
   
   private PacketReceiver packetReceiver =
-      new PacketReceiver(false);
+      new PacketReceiver(true);
   
   protected final String inAddr;
   protected final String myAddr;
@@ -114,8 +116,9 @@ class BlockReceiver implements Closeable {
   private final boolean isTransfer;
 
   private boolean syncOnClose;
+  private FileChannel outChannel;
 
-  BlockReceiver(final ExtendedBlock block, final DataInputStream in,
+  BlockReceiver(final ExtendedBlock block, final SocketInputWrapper in,
       final String inAddr, final String myAddr,
       final BlockConstructionStage stage, 
       final long newGs, final long minBytesRcvd, final long maxBytesRcvd, 
@@ -210,6 +213,7 @@ class BlockReceiver implements Closeable {
       this.out = streams.getDataOut();
       if (out instanceof FileOutputStream) {
         this.outFd = ((FileOutputStream)out).getFD();
+        this.outChannel = ((FileOutputStream)out).getChannel();
       } else {
         LOG.warn("Could not get file descriptor for outputstream of class " +
             out.getClass());
@@ -412,7 +416,7 @@ class BlockReceiver implements Closeable {
    */
   private int receivePacket() throws IOException {
     // read the next packet
-    packetReceiver.receiveNextPacket(in);
+    packetReceiver.receiveNextPacket(in.getReadableByteChannel());
 
     PacketHeader header = packetReceiver.getHeader();
     if (LOG.isDebugEnabled()){
@@ -504,7 +508,7 @@ class BlockReceiver implements Closeable {
       
       // by this point, the data in the buffer uses the disk checksum
 
-      byte[] lastChunkChecksum;
+      byte[] lastChunkChecksum = new byte[checksumSize];
       
       try {
         long onDiskLen = replicaInfo.getBytesOnDisk();
@@ -527,13 +531,22 @@ class BlockReceiver implements Closeable {
             computePartialChunkCrc(onDiskLen, offsetInChecksum, bytesPerChecksum);
           }
 
-          int startByteToDisk = (int)(onDiskLen-firstByteInBlock) 
-              + dataBuf.arrayOffset() + dataBuf.position();
-
+          
+          int startByteToDisk = (int)(onDiskLen-firstByteInBlock);
           int numBytesToDisk = (int)(offsetInBlock-onDiskLen);
           
+          assert dataBuf.position() == 0;
+          dataBuf.position(startByteToDisk);
           // Write data to disk.
-          out.write(dataBuf.array(), startByteToDisk, numBytesToDisk);
+          if (outChannel != null) {
+            IOUtils.writeFully(outChannel, dataBuf);
+          } else {
+            // slow path for simulated dataset
+            byte[] buf = new byte[dataBuf.remaining()];
+            dataBuf.get(buf);
+            
+            out.write(buf, 0, numBytesToDisk);
+          }
 
           // If this is a partial chunk, then verify that this is the only
           // chunk in the packet. Calculate new crc for this chunk.
@@ -545,7 +558,10 @@ class BlockReceiver implements Closeable {
                                     " len = " + len + 
                                     " bytesPerChecksum " + bytesPerChecksum);
             }
-            partialCrc.update(dataBuf.array(), startByteToDisk, numBytesToDisk);
+            byte[] partialData = new byte[numBytesToDisk];
+            dataBuf.position(startByteToDisk);
+            dataBuf.get(partialData);
+            partialCrc.update(partialData, 0, numBytesToDisk);
             byte[] buf = FSOutputSummer.convertToByteStream(partialCrc, checksumSize);
             lastChunkChecksum = Arrays.copyOfRange(
               buf, buf.length - checksumSize, buf.length
@@ -556,13 +572,13 @@ class BlockReceiver implements Closeable {
             }
             partialCrc = null;
           } else {
-            lastChunkChecksum = Arrays.copyOfRange(
-                checksumBuf.array(),
-                checksumBuf.arrayOffset() + checksumBuf.position() + checksumLen - checksumSize,
-                checksumBuf.arrayOffset() + checksumBuf.position() + checksumLen);
-            checksumOut.write(checksumBuf.array(),
-                checksumBuf.arrayOffset() + checksumBuf.position(),
-                checksumLen);
+            checksumBuf.position(checksumBuf.capacity() - checksumSize);
+            checksumBuf.get(lastChunkChecksum);
+            checksumBuf.position(0);
+            // TODO: optimize following
+            byte []tmp = new byte[checksumBuf.remaining()];
+            checksumBuf.get(tmp);
+            checksumOut.write(tmp, 0, checksumLen);
           }
           /// flush entire packet, sync unless close() will sync
           flushOrSync(syncBlock && !lastPacketInBlock);

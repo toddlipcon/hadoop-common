@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.protocol;
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.channels.ReadableByteChannel;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -157,14 +158,19 @@ public abstract class HdfsProtoUtil {
 
   public static InputStream vintPrefixed(final InputStream input)
   throws IOException {
+    int size = fullyReadVint(input);
+    assert size >= 0;
+  
+    return new ExactSizeInputStream(input, size);
+  }
+
+  public static int fullyReadVint(InputStream input) throws IOException {
     final int firstByte = input.read();
     if (firstByte == -1) {
       throw new EOFException("Premature EOF: no length prefix available");
     }
     
-    int size = CodedInputStream.readRawVarint32(firstByte, input);
-    assert size >= 0;
-  
-    return new ExactSizeInputStream(input, size);
+    return CodedInputStream.readRawVarint32(firstByte, input);
   }
+
 }

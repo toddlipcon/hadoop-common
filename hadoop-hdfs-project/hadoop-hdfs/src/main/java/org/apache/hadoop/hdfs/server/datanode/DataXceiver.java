@@ -103,8 +103,7 @@ class DataXceiver extends Receiver implements Runnable {
       SocketInputWrapper socketInput,
       DataNode datanode, 
       DataXceiverServer dataXceiverServer) throws IOException {
-    super(new DataInputStream(new BufferedInputStream(
-        socketInput, HdfsConstants.SMALL_BUFFER_SIZE)));
+    super(socketInput);
 
     this.s = s;
     this.socketInputWrapper = socketInput;
@@ -689,7 +688,7 @@ class DataXceiver extends Receiver implements Runnable {
     Status opStatus = SUCCESS;
     String errMsg = null;
     BlockReceiver blockReceiver = null;
-    DataInputStream proxyReply = null;
+    SocketInputWrapper proxyReply = null;
     
     try {
       // get the output stream to the proxy
@@ -708,10 +707,11 @@ class DataXceiver extends Receiver implements Runnable {
       new Sender(proxyOut).copyBlock(block, blockToken);
 
       // receive the response from the proxy
-      proxyReply = new DataInputStream(new BufferedInputStream(
-          NetUtils.getInputStream(proxySock), HdfsConstants.IO_FILE_BUFFER_SIZE));
-      BlockOpResponseProto copyResponse = BlockOpResponseProto.parseFrom(
-          HdfsProtoUtil.vintPrefixed(proxyReply));
+      proxyReply = NetUtils.getInputStream(proxySock);
+      int replySize = HdfsProtoUtil.fullyReadVint(proxyReply);
+      byte[] reply = new byte[replySize];
+      IOUtils.readFully(proxyReply, reply, 0, replySize);
+      BlockOpResponseProto copyResponse = BlockOpResponseProto.parseFrom(reply);
 
       if (copyResponse.getStatus() != SUCCESS) {
         if (copyResponse.getStatus() == ERROR_ACCESS_TOKEN) {
@@ -752,7 +752,7 @@ class DataXceiver extends Receiver implements Runnable {
       // receive the last byte that indicates the proxy released its thread resource
       if (opStatus == SUCCESS) {
         try {
-          proxyReply.readChar();
+          proxyReply.read();
         } catch (IOException ignored) {
         }
       }

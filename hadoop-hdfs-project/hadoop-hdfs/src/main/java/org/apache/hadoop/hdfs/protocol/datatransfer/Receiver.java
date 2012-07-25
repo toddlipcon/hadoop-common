@@ -22,38 +22,47 @@ import static org.apache.hadoop.hdfs.protocol.HdfsProtoUtil.fromProtos;
 import static org.apache.hadoop.hdfs.protocol.HdfsProtoUtil.vintPrefixed;
 import static org.apache.hadoop.hdfs.protocol.datatransfer.DataTransferProtoUtil.fromProto;
 
+import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
+import org.apache.hadoop.hdfs.protocol.HdfsProtoUtil;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpBlockChecksumProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpCopyBlockProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpReadBlockProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpReplaceBlockProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpTransferBlockProto;
 import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.OpWriteBlockProto;
+import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.net.SocketInputWrapper;
 
 /** Receiver */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public abstract class Receiver implements DataTransferProtocol {
-  protected final DataInputStream in;
+  protected final SocketInputWrapper in;
+  private DataInputStream bufferedDataInput;
+  private static final int VERY_SMALL_BUFFER = 6;
 
   /** Create a receiver for DataTransferProtocol with a socket. */
-  protected Receiver(final DataInputStream in) {
+  protected Receiver(final SocketInputWrapper in) {
     this.in = in;
+    
+    this.bufferedDataInput = new DataInputStream(
+        new BufferedInputStream(in, VERY_SMALL_BUFFER));
   }
 
   /** Read an Op.  It also checks protocol version. */
   protected final Op readOp() throws IOException {
-    final short version = in.readShort();
+    final short version = bufferedDataInput.readShort();
     if (version != DataTransferProtocol.DATA_TRANSFER_VERSION) {
       throw new IOException( "Version Mismatch (Expected: " +
           DataTransferProtocol.DATA_TRANSFER_VERSION  +
           ", Received: " +  version + " )");
     }
-    return Op.read(in);
+    return Op.read(bufferedDataInput);
   }
 
   /** Process op by the corresponding method. */
@@ -63,19 +72,19 @@ public abstract class Receiver implements DataTransferProtocol {
       opReadBlock();
       break;
     case WRITE_BLOCK:
-      opWriteBlock(in);
+      opWriteBlock();
       break;
     case REPLACE_BLOCK:
-      opReplaceBlock(in);
+      opReplaceBlock();
       break;
     case COPY_BLOCK:
-      opCopyBlock(in);
+      opCopyBlock();
       break;
     case BLOCK_CHECKSUM:
-      opBlockChecksum(in);
+      opBlockChecksum();
       break;
     case TRANSFER_BLOCK:
-      opTransferBlock(in);
+      opTransferBlock();
       break;
     default:
       throw new IOException("Unknown op " + op + " in data stream");
@@ -84,7 +93,8 @@ public abstract class Receiver implements DataTransferProtocol {
 
   /** Receive OP_READ_BLOCK */
   private void opReadBlock() throws IOException {
-    OpReadBlockProto proto = OpReadBlockProto.parseFrom(vintPrefixed(in));
+    OpReadBlockProto proto = OpReadBlockProto.parseFrom(
+        readVintPrefixedData());
     readBlock(fromProto(proto.getHeader().getBaseHeader().getBlock()),
         fromProto(proto.getHeader().getBaseHeader().getToken()),
         proto.getHeader().getClientName(),
@@ -92,9 +102,23 @@ public abstract class Receiver implements DataTransferProtocol {
         proto.getLen());
   }
   
+  private byte[] readVintPrefixedData() throws IOException {
+    int vint = HdfsProtoUtil.fullyReadVint(bufferedDataInput);
+    byte[] data = new byte[vint];
+    
+    int avail = bufferedDataInput.available(); 
+    IOUtils.readFully(bufferedDataInput, data, 0, avail);
+    assert bufferedDataInput.available() == 0;
+    
+    int remaining = vint - avail;
+    IOUtils.readFully(in, data, avail, remaining);
+    
+    return data;
+  }
+
   /** Receive OP_WRITE_BLOCK */
-  private void opWriteBlock(DataInputStream in) throws IOException {
-    final OpWriteBlockProto proto = OpWriteBlockProto.parseFrom(vintPrefixed(in));
+  private void opWriteBlock() throws IOException {
+    final OpWriteBlockProto proto = OpWriteBlockProto.parseFrom(readVintPrefixedData());
     writeBlock(fromProto(proto.getHeader().getBaseHeader().getBlock()),
         fromProto(proto.getHeader().getBaseHeader().getToken()),
         proto.getHeader().getClientName(),
@@ -108,9 +132,9 @@ public abstract class Receiver implements DataTransferProtocol {
   }
 
   /** Receive {@link Op#TRANSFER_BLOCK} */
-  private void opTransferBlock(DataInputStream in) throws IOException {
+  private void opTransferBlock() throws IOException {
     final OpTransferBlockProto proto =
-      OpTransferBlockProto.parseFrom(vintPrefixed(in));
+      OpTransferBlockProto.parseFrom(readVintPrefixedData());
     transferBlock(fromProto(proto.getHeader().getBaseHeader().getBlock()),
         fromProto(proto.getHeader().getBaseHeader().getToken()),
         proto.getHeader().getClientName(),
@@ -118,8 +142,8 @@ public abstract class Receiver implements DataTransferProtocol {
   }
 
   /** Receive OP_REPLACE_BLOCK */
-  private void opReplaceBlock(DataInputStream in) throws IOException {
-    OpReplaceBlockProto proto = OpReplaceBlockProto.parseFrom(vintPrefixed(in));
+  private void opReplaceBlock() throws IOException {
+    OpReplaceBlockProto proto = OpReplaceBlockProto.parseFrom(readVintPrefixedData());
     replaceBlock(fromProto(proto.getHeader().getBlock()),
         fromProto(proto.getHeader().getToken()),
         proto.getDelHint(),
@@ -127,15 +151,15 @@ public abstract class Receiver implements DataTransferProtocol {
   }
 
   /** Receive OP_COPY_BLOCK */
-  private void opCopyBlock(DataInputStream in) throws IOException {
-    OpCopyBlockProto proto = OpCopyBlockProto.parseFrom(vintPrefixed(in));
+  private void opCopyBlock() throws IOException {
+    OpCopyBlockProto proto = OpCopyBlockProto.parseFrom(readVintPrefixedData());
     copyBlock(fromProto(proto.getHeader().getBlock()),
         fromProto(proto.getHeader().getToken()));
   }
 
   /** Receive OP_BLOCK_CHECKSUM */
-  private void opBlockChecksum(DataInputStream in) throws IOException {
-    OpBlockChecksumProto proto = OpBlockChecksumProto.parseFrom(vintPrefixed(in));
+  private void opBlockChecksum() throws IOException {
+    OpBlockChecksumProto proto = OpBlockChecksumProto.parseFrom(readVintPrefixedData());
     
     blockChecksum(fromProto(proto.getHeader().getBlock()),
         fromProto(proto.getHeader().getToken()));
