@@ -451,8 +451,22 @@ class BlockSender implements java.io.Closeable {
     int packetLen = dataLen + checksumDataLen + 4;
     boolean lastDataPacket = offset + dataLen == endOffset && dataLen > 0;
 
-    writePacketHeader(pkt, dataLen, packetLen);
-
+    // The packet buffer is organized as follows:
+    // _______HHHHCCCCD?D?D?D?
+    //        ^   ^
+    //        |   \ checksumOff
+    //        \ headerOff
+    // _ padding, since the header is variable-length
+    // H = header and length prefixes
+    // C = checksums
+    // D? = data, if transferTo is false.
+    
+    int headerLen = writePacketHeader(pkt, dataLen, packetLen);
+    
+    // Per above, the header doesn't start at the beginning of the
+    // buffer
+    int headerOff = pkt.position() - headerLen;
+    
     int checksumOff = pkt.position();
     byte[] buf = pkt.array();
     
@@ -482,7 +496,8 @@ class BlockSender implements java.io.Closeable {
     try {
       if (transferTo) {
         SocketOutputStream sockOut = (SocketOutputStream)out;
-        sockOut.write(buf, 0, dataOff); // First write checksum
+        // First write header and checksums
+        sockOut.write(buf, headerOff, dataOff - headerOff);
         
         // no need to flush since we know out is not a buffered stream
         FileChannel fileCh = ((FileInputStream)blockIn).getChannel();
@@ -492,7 +507,7 @@ class BlockSender implements java.io.Closeable {
         blockInPosition += dataLen;
       } else { 
         // normal transfer
-        out.write(buf, 0, dataOff + dataLen);
+        out.write(buf, headerOff, dataOff + dataLen - headerOff);
       }
     } catch (IOException e) {
       if (e instanceof SocketTimeoutException) {
@@ -625,7 +640,7 @@ class BlockSender implements java.io.Closeable {
     final long startTime = ClientTraceLog.isInfoEnabled() ? System.nanoTime() : 0;
     try {
       int maxChunksPerPacket;
-      int pktSize = PacketHeader.PKT_HEADER_LEN;
+      int pktBufSize = PacketHeader.PKT_MAX_HEADER_LEN;
       boolean transferTo = transferToAllowed && !verifyChecksum
           && baseStream instanceof SocketOutputStream
           && blockIn instanceof FileInputStream;
@@ -636,15 +651,15 @@ class BlockSender implements java.io.Closeable {
         maxChunksPerPacket = numberOfChunks(TRANSFERTO_BUFFER_SIZE);
         
         // Smaller packet size to only hold checksum when doing transferTo
-        pktSize += checksumSize * maxChunksPerPacket;
+        pktBufSize += checksumSize * maxChunksPerPacket;
       } else {
         maxChunksPerPacket = Math.max(1,
             numberOfChunks(HdfsConstants.IO_FILE_BUFFER_SIZE));
         // Packet size includes both checksum and data
-        pktSize += (chunkSize + checksumSize) * maxChunksPerPacket;
+        pktBufSize += (chunkSize + checksumSize) * maxChunksPerPacket;
       }
 
-      ByteBuffer pktBuf = ByteBuffer.allocate(pktSize);
+      ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
 
       while (endOffset > offset) {
         manageOsCache();
@@ -714,14 +729,19 @@ class BlockSender implements java.io.Closeable {
   }
 
   /**
-   * Write packet header into {@code pkt}
+   * Write packet header into {@code pkt},
+   * return the length of the header written.
    */
-  private void writePacketHeader(ByteBuffer pkt, int dataLen, int packetLen) {
+  private int writePacketHeader(ByteBuffer pkt, int dataLen, int packetLen) {
     pkt.clear();
     // both syncBlock and syncPacket are false
     PacketHeader header = new PacketHeader(packetLen, offset, seqno,
         (dataLen == 0), dataLen, false);
+    
+    int size = header.getSerializedSize();
+    pkt.position(PacketHeader.PKT_MAX_HEADER_LEN - size);
     header.putInBuffer(pkt);
+    return size;
   }
   
   boolean didSendEntireByteRange() {
