@@ -25,6 +25,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.List;
 
+import org.apache.commons.logging.impl.Log4JLogger;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.BlockLocation;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -39,6 +40,7 @@ import org.apache.hadoop.hdfs.server.datanode.DataNode;
 import org.apache.hadoop.hdfs.server.datanode.DataNodeTestUtils;
 import org.apache.hadoop.hdfs.server.datanode.SimulatedFSDataset;
 import org.apache.hadoop.ipc.RemoteException;
+import org.apache.log4j.Level;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,6 +52,10 @@ public class TestFileAppend{
   boolean simulatedStorage = false;
 
   private static byte[] fileContents = null;
+
+  static {
+    ((Log4JLogger)DFSClient.LOG).getLogger().setLevel(Level.ALL);
+  }
 
   //
   // writes to file but does not close it
@@ -270,7 +276,7 @@ public class TestFileAppend{
     } catch (Throwable e) {
       System.out.println("Throwable :" + e);
       e.printStackTrace();
-      throw new IOException("Throwable : " + e);
+      throw new RuntimeException(e);
     } finally {
       fs.close();
       cluster.shutdown();

@@ -77,8 +77,10 @@ import org.apache.hadoop.util.Daemon;
 import org.apache.hadoop.util.DataChecksum;
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.Time;
+import org.mortbay.log.Log;
 
 import com.google.common.base.Preconditions;
+import com.google.common.base.Throwables;
 
 
 /****************************************************************
@@ -1341,7 +1343,8 @@ public class DFSOutputStream extends OutputStream implements Syncable {
   }
   
   private ByteBuffer allocPacketDataBuf() {
-    long remInBlock = blockSize - bytesCurBlock;
+    long remInBlock = Math.max(blockSize - bytesCurBlock,
+        checksum.getBytesPerChecksum());
     int packetSize = (int) Math.min(remInBlock,
         dfsClient.getConf().writePacketSize);
     return bufferPool.getBuffer(packetSize);
@@ -1426,10 +1429,19 @@ public class DFSOutputStream extends OutputStream implements Syncable {
           if (partialChunkSize > 0) {
             ByteBuffer partialBuf = dataBuf.duplicate();
             partialBuf.position(dataBuf.position() - partialChunkSize);
-            partialBuf.limit(partialChunkSize);
+            partialBuf.limit(dataBuf.position());
             
             pendingAfterFlush = allocPacketDataBuf();
-            pendingAfterFlush.put(partialBuf);
+            try {
+              pendingAfterFlush.put(partialBuf);
+            } finally {
+              DFSClient.LOG.info(
+              "\ndatabuf: " + dataBuf + "\n" +
+              "paf:     " + pendingAfterFlush + "\n" +
+              "partial: " + partialBuf);
+            }
+            
+            
           }
         }
         
