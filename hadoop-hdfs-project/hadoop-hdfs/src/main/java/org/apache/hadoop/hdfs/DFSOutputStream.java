@@ -146,6 +146,7 @@ public class DFSOutputStream extends OutputStream implements Syncable {
 
     private ByteBuffer data;
     private ByteBuffer checksums;
+    private long lastByteOffsetInBlock;
 
     private static final long HEART_BEAT_SEQNO = -1L;
 
@@ -156,6 +157,7 @@ public class DFSOutputStream extends OutputStream implements Syncable {
     Packet() {
       this.lastPacketInBlock = false;
       this.offsetInBlock = 0;
+      this.lastByteOffsetInBlock = 0;
       this.seqno = HEART_BEAT_SEQNO;
       
       data = checksums = EMPTY_BUFFER;
@@ -175,6 +177,7 @@ public class DFSOutputStream extends OutputStream implements Syncable {
         ByteBuffer data, ByteBuffer checksums) {
       this.lastPacketInBlock = false;
       this.offsetInBlock = offsetInBlock;
+      this.lastByteOffsetInBlock = offsetInBlock + data.remaining();
       this.seqno = currentSeqno;
       
       this.data = data;
@@ -205,7 +208,7 @@ public class DFSOutputStream extends OutputStream implements Syncable {
     
     // get the packet's last byte's offset in the block
     long getLastByteOffsetBlock() {
-      return offsetInBlock + data.remaining();
+      return lastByteOffsetInBlock;
     }
     
     /**
