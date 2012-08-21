@@ -56,6 +56,8 @@ public class TransferFsImage {
   public final static String MD5_HEADER = "X-MD5-Digest";
 
   private static final Log LOG = LogFactory.getLog(TransferFsImage.class);
+  private static final int READ_TIMEOUT = 30000;
+  private static final int CONNECT_TIMEOUT = 30000;
   
   public static void downloadMostRecentImageToDirectory(String fsName,
       File dir) throws IOException {
@@ -221,7 +223,9 @@ public class TransferFsImage {
     long startTime = Time.monotonicNow();
     HttpURLConnection connection = (HttpURLConnection)
       SecurityUtil.openSecureHttpConnection(url);
-
+    connection.setReadTimeout(READ_TIMEOUT);
+    connection.setConnectTimeout(CONNECT_TIMEOUT);
+    
     if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
       throw new HttpGetFailedException(
           "Image transfer servlet at " + url +
