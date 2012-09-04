@@ -87,6 +87,13 @@ public interface JournalManager extends Closeable, FormatConfirmable,
   @Override
   void close() throws IOException;
   
+  /**
+   * @return true if the JM is currently operating in a degraded mode,
+   * but would be restored to a higher degree of reliability by an
+   * log roll.
+   */
+  boolean wantsAutomaticRoll();
+  
   /** 
    * Indicate that a journal is cannot be used to load a certain range of 
    * edits.

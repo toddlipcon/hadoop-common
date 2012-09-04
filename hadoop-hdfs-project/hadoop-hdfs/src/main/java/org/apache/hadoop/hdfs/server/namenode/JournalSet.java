@@ -504,6 +504,15 @@ public class JournalSet implements JournalManager {
       return false;
     }
     
+    public boolean wantsAutomaticRoll() {
+      for (JournalAndStream js : journals) {
+        if (js.getManager().wantsAutomaticRoll()) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     @Override
     protected long getNumSync() {
       for (JournalAndStream jas : journals) {

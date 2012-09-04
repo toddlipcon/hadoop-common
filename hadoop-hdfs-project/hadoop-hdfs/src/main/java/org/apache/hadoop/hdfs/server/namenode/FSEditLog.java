@@ -434,6 +434,14 @@ public class FSEditLog implements LogsPurgeable {
     return editLogStream.shouldForceSync();
   }
   
+  /**
+   * Check if a log roll is required by the underlying journal streams,
+   * eg to repair a previously-failed journal.
+   */
+  private boolean wantsAutomaticRoll() {
+    return journalSet.wantsAutomaticRoll();
+  }
+  
   private long beginTransaction() {
     assert Thread.holdsLock(this);
     // get a new transactionId
