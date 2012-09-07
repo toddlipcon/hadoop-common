@@ -365,11 +365,15 @@ public class QuorumJournalManager implements JournalManager {
   @Override
   public void recoverUnfinalizedSegments() throws IOException {
     Preconditions.checkState(!isActiveWriter, "already active writer");
-    
+
+    LOG.info("Starting recovery process for unclosed journal segments...");
     Map<AsyncLogger, NewEpochResponseProto> resps =
         loggers.createNewUniqueEpoch(nsInfo);
-    LOG.info("newEpoch(" + loggers.getEpoch() + ") responses:\n" +
+    LOG.info("Successfully started new epoch " + loggers.getEpoch());
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("newEpoch(" + loggers.getEpoch() + ") responses:\n" +
         QuorumCall.mapToString(resps));
+    }
     
     long mostRecentSegmentTxId = Long.MIN_VALUE;
     for (NewEpochResponseProto r : resps.values()) {

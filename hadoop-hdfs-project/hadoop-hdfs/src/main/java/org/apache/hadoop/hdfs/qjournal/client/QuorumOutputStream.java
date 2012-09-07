@@ -118,4 +118,8 @@ class QuorumOutputStream extends EditLogOutputStream {
     return sb.toString();
   }
   
+  @Override
+  public String toString() {
+    return "QuorumOutputStream starting at txid " + segmentTxId;
+  }
 }
