@@ -280,6 +280,11 @@ public class DataChecksum implements Checksum {
   throws ChecksumException {
     if (type.size == 0) return;
     
+    if (NativeCrc32.isAvailable()) {
+      NativeCrc32.verifyChunkedSums(bytesPerChecksum, type.id, checksums, data,
+          fileName, basePos);
+      return;
+    }
     if (data.hasArray() && checksums.hasArray()) {
       verifyChunkedSums(
           data.array(), data.arrayOffset() + data.position(), data.remaining(),
@@ -287,12 +292,8 @@ public class DataChecksum implements Checksum {
           fileName, basePos);
       return;
     }
-    if (NativeCrc32.isAvailable()) {
-      NativeCrc32.verifyChunkedSums(bytesPerChecksum, type.id, checksums, data,
-          fileName, basePos);
-      return;
-    }
     
+    // Non-native path for direct bufs
     int startDataPos = data.position();
     data.mark();
     checksums.mark();

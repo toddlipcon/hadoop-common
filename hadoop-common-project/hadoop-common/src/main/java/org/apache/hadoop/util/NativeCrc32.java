@@ -29,6 +29,12 @@ class NativeCrc32 {
   // Used by performance tests
   static boolean allowed = true;
   
+  static {
+    if (isAvailable()) {
+      initNative();
+    }
+  }
+  
   /**
    * Return true if the JNI-based native CRC extensions are available.
    */
@@ -68,6 +74,8 @@ class NativeCrc32 {
       ByteBuffer data, int dataOffset, int dataLength,
       String fileName, long basePos);
 
+  private static native void initNative();
+  
   // Copy the constants over from DataChecksum so that javah will pick them up
   // and make them available in the native code header.
   public static final int CHECKSUM_CRC32 = DataChecksum.CHECKSUM_CRC32;
