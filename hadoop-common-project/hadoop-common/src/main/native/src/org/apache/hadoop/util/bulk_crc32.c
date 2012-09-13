@@ -58,7 +58,11 @@ int bulk_calculate_crc(const uint8_t *data, size_t data_len,
       crc_update_func = crc32_zlib_sb8;
       break;
     case CRC32C_POLYNOMIAL:
-      crc_update_func = crc32c_sb8;
+      if (likely(cached_cpu_supports_crc32)) {
+        crc_update_func = crc32c_hardware;
+      } else {
+        crc_update_func = crc32c_sb8;
+      }
       break;
     default:
       return -EINVAL;

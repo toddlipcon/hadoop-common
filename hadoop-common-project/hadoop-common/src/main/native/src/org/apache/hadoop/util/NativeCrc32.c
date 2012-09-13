@@ -253,8 +253,8 @@ JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeVerifyChunk
 
   // The JNI_ABORT mode is used because we haven't modified
   // the data, and hence do not need to memcpy it back
-  bytebuffer_release(env, &data_bbuf, data_addr, JNI_ABORT);
   bytebuffer_release(env, &sums_bbuf, sums_addr, JNI_ABORT);
+  bytebuffer_release(env, &data_bbuf, data_addr, JNI_ABORT);
 
   if (likely(ret == CHECKSUMS_VALID)) {
     return;
@@ -268,6 +268,71 @@ JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeVerifyChunk
       "Bad response code from native bulk_verify_crc");
   }
 }
+
+JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_nativeCalculateChunkedSums
+  (JNIEnv *env, jclass clazz,
+    jint bytes_per_checksum, jint j_crc_type,
+    jobject j_sums, jint sums_offset,
+    jobject j_data, jint data_offset, jint data_len)
+{
+  int crc_type;
+  if (unlikely(check_params(env,
+        j_sums, sums_offset,
+        j_data, data_offset, data_len,
+        bytes_per_checksum,
+        j_crc_type, &crc_type))) {
+    return; // exception thrown
+  }
+
+  // Convert direct byte buffers to C pointers
+  bbuf_t data_bbuf, sums_bbuf;
+  if (bytebuffer_resolve(env, j_data, &data_bbuf)) {
+    return; // exception thrown
+  }
+
+  if (bytebuffer_resolve(env, j_sums, &sums_bbuf)) {
+    return; // exception thrown
+  }
+
+  // If we end up going to cleanup before even verifying
+  // any sums, it's due to OOME (ie we can't grab a pointer to the
+  // bytebuffer array, so it returns null)
+  uint8_t *data_addr = NULL;
+  uint8_t *sums_addr = NULL;
+
+  if ((data_addr = bytebuffer_get(env, &data_bbuf)) == NULL) {
+    THROW(env, "java/lang/OutOfMemoryError", "unable to get array data");
+    return;
+  }
+
+  if ((sums_addr = bytebuffer_get(env, &sums_bbuf)) == NULL) {
+    // Have to release the data buffer, or else it's illegal to
+    // throw an exception.
+    bytebuffer_release(env, &data_bbuf, data_addr, JNI_ABORT);
+    THROW(env, "java/lang/OutOfMemoryError", "unable to get array data");
+    return;
+  }
+
+  uint32_t *sums = (uint32_t *)(sums_addr + sums_offset);
+  uint8_t *data = data_addr + data_offset;
+
+  // Setup complete. Actually calculate checksums.
+  int ret = bulk_calculate_crc(data, data_len, sums, crc_type,
+                               bytes_per_checksum);
+
+  // Release the buffers. '0' flag causes sums to be memcpyed back
+  // whereas JNI_ABORT indicates that we didn't modify the data buf
+  bytebuffer_release(env, &sums_bbuf, sums_addr, 0);
+  bytebuffer_release(env, &data_bbuf, data_addr, JNI_ABORT);
+
+  if (likely(!ret)) {
+    return;
+  } else {
+    THROW(env, "java/lang/AssertionError",
+      "Bad response code from native bulk_calculate_crc");
+  }
+}
+
 
 JNIEXPORT void JNICALL Java_org_apache_hadoop_util_NativeCrc32_initNative
   (JNIEnv *env, jclass clazz)

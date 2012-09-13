@@ -102,28 +102,40 @@ public class TestDataChecksum {
     dataBuf.limit(dataBuf.limit() - 1);
     checksum.verifyChunkedSums(dataBuf, checksumBuf, "fake file", 0);    
     
-    // Make sure bad checksums fail - error at beginning of array
-    corruptBufferOffset(checksumBuf, SUMS_OFFSET_IN_BUFFER);
-    try {
-      checksum.verifyChunkedSums(dataBuf, checksumBuf, "fake file", 0);
-      fail("Did not throw on bad checksums");
-    } catch (ChecksumException ce) {
-      assertEquals(0, ce.getPos());
-    }
+    // Make sure bad checksums fail - error at beginning of data array
+    checkCorruptionCausesError(checksum,
+        dataBuf, DATA_OFFSET_IN_BUFFER,
+        dataBuf, checksumBuf,
+        0);
 
-    // Make sure bad checksums fail - error at end of array
-    uncorruptBufferOffset(checksumBuf, SUMS_OFFSET_IN_BUFFER);
-    corruptBufferOffset(checksumBuf, SUMS_OFFSET_IN_BUFFER + sumsLength - 1);
-    try {
-      checksum.verifyChunkedSums(dataBuf, checksumBuf, "fake file", 0);
-      fail("Did not throw on bad checksums");
-    } catch (ChecksumException ce) {
-      int expectedPos = checksum.getBytesPerChecksum() * (numSums - 1);
-      assertEquals(expectedPos, ce.getPos());
-      assertTrue(ce.getMessage().contains("fake file"));
-    }
+    // Error at end of data array
+    checkCorruptionCausesError(checksum,
+        dataBuf, DATA_OFFSET_IN_BUFFER + dataLength - 1,
+        dataBuf, checksumBuf,
+        checksum.getBytesPerChecksum() * (numSums - 1));
+    
+    // Error in last checksum
+    checkCorruptionCausesError(checksum,
+        checksumBuf, SUMS_OFFSET_IN_BUFFER + sumsLength - 1,
+        dataBuf, checksumBuf,
+        checksum.getBytesPerChecksum() * (numSums - 1));
   }
   
+  private void checkCorruptionCausesError(DataChecksum checksum,
+      ByteBuffer bufToCorrupt, int offsetToCorrupt,
+      ByteBuffer dataBuf, ByteBuffer checksumBuf,
+      int expectedErrorOffset) {
+    corruptBufferOffset(bufToCorrupt, offsetToCorrupt);
+    try {
+      checksum.verifyChunkedSums(dataBuf, checksumBuf, "fake file", 0);
+      fail("Did not throw on bad checksums");
+    } catch (ChecksumException ce) {
+      assertEquals(expectedErrorOffset, ce.getPos());
+    } finally {
+      uncorruptBufferOffset(bufToCorrupt, offsetToCorrupt);
+    }
+  }
+
   private void doPerfTest(DataChecksum checksum, int dataLength,
       boolean useDirect, boolean allowNative)
       throws ChecksumException {
