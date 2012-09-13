@@ -19,9 +19,13 @@ package org.apache.hadoop.util;
 
 import java.nio.ByteBuffer;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.hadoop.fs.ChecksumException;
+import org.junit.Before;
 import org.junit.Test;
+
+import com.google.common.base.Stopwatch;
 
 import static org.junit.Assert.*;
 
@@ -38,6 +42,11 @@ public class TestDataChecksum {
   private static final DataChecksum.Type CHECKSUM_TYPES[] = {
     DataChecksum.Type.CRC32, DataChecksum.Type.CRC32C
   };
+  
+  @Before
+  public void enableNative() {
+    NativeCrc32.allowed = true;
+  }
   
   @Test
   public void testBulkOps() throws Exception {
@@ -112,6 +121,60 @@ public class TestDataChecksum {
       int expectedPos = checksum.getBytesPerChecksum() * (numSums - 1);
       assertEquals(expectedPos, ce.getPos());
       assertTrue(ce.getMessage().contains("fake file"));
+    }
+  }
+  
+  private void doPerfTest(DataChecksum checksum, int dataLength,
+      boolean useDirect, boolean allowNative)
+      throws ChecksumException {
+
+    NativeCrc32.allowed = allowNative;
+    
+    byte[] data = new byte[dataLength];
+    new Random().nextBytes(data);
+    
+    int numSums = (dataLength - 1)/checksum.getBytesPerChecksum() + 1;
+    int sumsLength = numSums * checksum.getChecksumSize();
+    byte checksums[] = new byte[sumsLength];
+    
+    ByteBuffer dataBuf = ByteBuffer.wrap(data);
+    ByteBuffer checksumBuf = ByteBuffer.wrap(checksums);
+    // Swap out for direct buffers if requested.
+    if (useDirect) {
+      dataBuf = directify(dataBuf);
+      checksumBuf = directify(checksumBuf);
+    }
+
+    // Calculation time.
+    Stopwatch sw = new Stopwatch().start();
+    for (int i = 0; i < 1000; i++) {
+      checksum.calculateChunkedSums(dataBuf, checksumBuf);
+    }
+    long calcMicros = sw.elapsedTime(TimeUnit.MICROSECONDS);
+
+    sw = new Stopwatch().start();
+    for (int i = 0; i < 1000; i++) {
+      checksum.verifyChunkedSums(dataBuf, checksumBuf, "Fake file", 0);
+    }
+    long verifyMicros = sw.elapsedTime(TimeUnit.MICROSECONDS);
+    System.out.println(checksum.getChecksumType() + "\t" +
+        (useDirect ? "direct":"array") + "\t" + 
+        (allowNative ? "nativeAllowed" : "nativeOff") + "\t" +
+        calcMicros + "\t" + verifyMicros);
+  }
+  
+  @Test
+  public void testPerformance() throws ChecksumException {
+    // 64KB buffers are interesting, since that's the packet size for DFS
+    for (boolean useDirect : new boolean[]{false, true}) {
+      for (boolean allowNative : new boolean[]{false, true}) {
+        for (DataChecksum.Type type : CHECKSUM_TYPES) {
+          for (int i = 0; i < 10; i++) {
+            DataChecksum sum = DataChecksum.newDataChecksum(type, BYTES_PER_CHUNK);
+            doPerfTest(sum, 64*1024, useDirect, allowNative);
+          }
+        }
+      }
     }
   }
   

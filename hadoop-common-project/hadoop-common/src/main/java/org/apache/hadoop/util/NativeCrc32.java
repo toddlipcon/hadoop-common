@@ -26,12 +26,14 @@ import org.apache.hadoop.fs.ChecksumException;
  * natively.
  */
 class NativeCrc32 {
+  // Used by performance tests
+  static boolean allowed = true;
   
   /**
    * Return true if the JNI-based native CRC extensions are available.
    */
   public static boolean isAvailable() {
-    return NativeCodeLoader.isNativeCodeLoaded();
+    return NativeCodeLoader.isNativeCodeLoaded() && allowed;
   }
 
   /**
