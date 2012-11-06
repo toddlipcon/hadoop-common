@@ -53,6 +53,7 @@ import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -71,6 +72,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -153,10 +155,10 @@ import org.apache.hadoop.metrics2.lib.DefaultMetricsSystem;
 import org.apache.hadoop.metrics2.util.MBeans;
 import org.apache.hadoop.net.DNS;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.net.unix.ServerDomainSocket;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
 import org.apache.hadoop.security.authorize.AccessControlList;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
@@ -165,6 +167,7 @@ import org.apache.hadoop.util.DiskChecker;
 import org.apache.hadoop.util.DiskChecker.DiskErrorException;
 import org.apache.hadoop.util.DiskChecker.DiskOutOfSpaceException;
 import org.apache.hadoop.util.GenericOptionsParser;
+import org.apache.hadoop.util.NativeCodeLoader;
 import org.apache.hadoop.util.ServicePlugin;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.Time;
@@ -249,6 +252,7 @@ public class DataNode extends Configured
   public final static String EMPTY_DEL_HINT = "";
   AtomicInteger xmitsInProgress = new AtomicInteger();
   Daemon dataXceiverServer = null;
+  Daemon localDataXceiverServer = null;
   ThreadGroup threadGroup = null;
   private DNConf dnConf;
   private volatile boolean heartbeatsDisabledForTests = false;
@@ -260,6 +264,7 @@ public class DataNode extends Configured
   private String hostName;
   private DatanodeID id;
   
+  final private boolean isFileDescriptorPassingEnabled;
   boolean isBlockTokenEnabled;
   BlockPoolTokenSecretManager blockPoolTokenSecretManager;
   private boolean hasAnyBlockPoolRegistered = false;
@@ -277,7 +282,6 @@ public class DataNode extends Configured
   private AbstractList<File> dataDirs;
   private Configuration conf;
 
-  private final List<String> usersWithLocalPathAccess;
   private boolean connectToDnViaHostname;
   ReadaheadPool readaheadPool;
   private final boolean getHdfsBlockLocationsEnabled;
@@ -300,14 +304,28 @@ public class DataNode extends Configured
            final SecureResources resources) throws IOException {
     super(conf);
 
-    this.usersWithLocalPathAccess = Arrays.asList(
-        conf.getTrimmedStrings(DFSConfigKeys.DFS_BLOCK_LOCAL_PATH_ACCESS_USER_KEY));
     this.connectToDnViaHostname = conf.getBoolean(
         DFSConfigKeys.DFS_DATANODE_USE_DN_HOSTNAME,
         DFSConfigKeys.DFS_DATANODE_USE_DN_HOSTNAME_DEFAULT);
     this.getHdfsBlockLocationsEnabled = conf.getBoolean(
         DFSConfigKeys.DFS_HDFS_BLOCKS_METADATA_ENABLED, 
         DFSConfigKeys.DFS_HDFS_BLOCKS_METADATA_ENABLED_DEFAULT);
+
+    // Determine whether we should try to pass file descriptors to clients.
+    if (conf.getBoolean(DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_KEY,
+              DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_DEFAULT)) {
+      if (!NativeCodeLoader.isNativeCodeLoaded()) {
+        LOG.warn("File descriptor passing is disabled because libhadoop.so " +
+            "is not loaded.");
+        this.isFileDescriptorPassingEnabled = false;
+      } else {
+        LOG.info("File descriptor passing is enabled.");
+        this.isFileDescriptorPassingEnabled = true;
+      }
+    } else {
+      this.isFileDescriptorPassingEnabled = false;
+    }
+
     try {
       hostName = getHostName(conf);
       LOG.info("Configured hostname is " + hostName);
@@ -533,15 +551,36 @@ public class DataNode extends Configured
       ss = secureResources.getStreamingSocket();
     }
     ss.setReceiveBufferSize(HdfsConstants.DEFAULT_DATA_SOCKET_SIZE); 
-
     streamingAddr = new InetSocketAddress(ss.getInetAddress().getHostAddress(),
                                      ss.getLocalPort());
-
     LOG.info("Opened streaming server at " + streamingAddr);
     this.threadGroup = new ThreadGroup("dataXceiverServer");
     this.dataXceiverServer = new Daemon(threadGroup, 
         new DataXceiverServer(ss, conf, this));
     this.threadGroup.setDaemon(true); // auto destroy when empty
+
+    String domainSocketPath =
+        conf.get(DFSConfigKeys.DFS_DATANODE_DOMAIN_SOCKET_PATH);
+    if (domainSocketPath != null) {
+      if (!NativeCodeLoader.isNativeCodeLoaded()) {
+        LOG.warn("Although a UNIX domain socket path is configured as " +
+            domainSocketPath + ", libhadoop.so is not loaded.  We " +
+            "cannot start a localDataXceiverServer.");
+      } else {
+        ServerDomainSocket ds = new ServerDomainSocket();
+        ds.setPath(domainSocketPath);
+        try {
+          InetSocketAddress addr = DataNode.getStreamingAddr(conf);
+          Server.bind(ds, addr, 0);
+          ds.setReceiveBufferSize(HdfsConstants.DEFAULT_DATA_SOCKET_SIZE); 
+          this.localDataXceiverServer = new Daemon(threadGroup, 
+              new DataXceiverServer(ds, conf, this));
+          LOG.info("Opened UNIX domain socket server on " + ds.getBindPath());
+        } catch (IOException e) {
+          LOG.error("failed to start localDataXceiverServer", e);
+        }
+      }
+    }
   }
   
   // calls specific to BP
@@ -995,55 +1034,58 @@ public class DataNode extends Configured
     return "DS-" + rand + "-" + ip + "-" + port + "-"
         + Time.now();
   }
-  
-  /** Ensure the authentication method is kerberos */
-  private void checkKerberosAuthMethod(String msg) throws IOException {
-    // User invoking the call must be same as the datanode user
-    if (!UserGroupInformation.isSecurityEnabled()) {
-      return;
-    }
-    if (UserGroupInformation.getCurrentUser().getAuthenticationMethod() != 
-        AuthenticationMethod.KERBEROS) {
-      throw new AccessControlException("Error in " + msg
-          + "Only kerberos based authentication is allowed.");
-    }
-  }
-  
-  private void checkBlockLocalPathAccess() throws IOException {
-    checkKerberosAuthMethod("getBlockLocalPathInfo()");
-    String currentUser = UserGroupInformation.getCurrentUser().getShortUserName();
-    if (!usersWithLocalPathAccess.contains(currentUser)) {
-      throw new AccessControlException(
-          "Can't continue with getBlockLocalPathInfo() "
-              + "authorization. The user " + currentUser
-              + " is not allowed to call getBlockLocalPathInfo");
-    }
-  }
 
   @Override
   public BlockLocalPathInfo getBlockLocalPathInfo(ExtendedBlock block,
       Token<BlockTokenIdentifier> token) throws IOException {
-    checkBlockLocalPathAccess();
-    checkBlockToken(block, token, BlockTokenSecretManager.AccessMode.READ);
-    BlockLocalPathInfo info = data.getBlockLocalPathInfo(block);
-    if (LOG.isDebugEnabled()) {
-      if (info != null) {
-        if (LOG.isTraceEnabled()) {
-          LOG.trace("getBlockLocalPathInfo successful block=" + block
-              + " blockfile " + info.getBlockPath() + " metafile "
-              + info.getMetaPath());
-        }
-      } else {
-        if (LOG.isTraceEnabled()) {
-          LOG.trace("getBlockLocalPathInfo for block=" + block
-              + " returning null");
-        }
-      }
+    throw new AccessControlException("getBlockLocalPathInfo is deprecated!  " +
+      "Please upgrade your HDFS client.");
+  }
+  
+  static public class ShortCircuitFdsUnsupportedException extends IOException {
+    private static final long serialVersionUID = 1L;
+    public ShortCircuitFdsUnsupportedException(String msg) {
+      super(msg);
     }
-    metrics.incrBlocksGetLocalPathInfo();
-    return info;
   }
 
+  static public class ShortCircuitFdsVersionException extends IOException {
+    private static final long serialVersionUID = 1L;
+    public ShortCircuitFdsVersionException(String msg) {
+      super(msg);
+    }
+  }
+  
+  void checkFdPassingAvailable() throws ShortCircuitFdsUnsupportedException {
+    if (!isFileDescriptorPassingEnabled) {
+      // Can't pass file descriptors if it has been disabled on the DN.
+      if (NativeCodeLoader.isNativeCodeLoaded()) {
+        throw new ShortCircuitFdsUnsupportedException("libhadoop.so has " +
+            "not been loaded by this datanode.  File descriptor passing " +
+            "is not possible.");
+      }
+      throw new ShortCircuitFdsUnsupportedException("File descriptor passing " +
+        "is not enabled on this datanode.");
+    }
+  }
+  
+  FileInputStream[] requestShortCircuitFdsForRead(final ExtendedBlock blk,
+      final Token<BlockTokenIdentifier> token, int maxVersion) 
+          throws ShortCircuitFdsUnsupportedException,
+            ShortCircuitFdsVersionException, IOException {
+    checkFdPassingAvailable();
+    checkBlockToken(blk, token, BlockTokenSecretManager.AccessMode.READ);
+    int blkVersion = blk.getFormatVersion();
+    if (maxVersion < blkVersion) {
+      throw new ShortCircuitFdsVersionException("Your client is too old " +
+        "to read this block!  Its format version is " + 
+        blkVersion + ", but the highest format version you can read is " +
+        maxVersion);
+    }
+    metrics.incrBlocksGetLocalPathInfo();
+    return data.getShortCircuitFdsForRead(blk);
+  }
+  
   @Override
   public HdfsBlocksMetadata getHdfsBlocksMetadata(List<ExtendedBlock> blocks,
       List<Token<BlockTokenIdentifier>> tokens) throws IOException, 
@@ -1112,29 +1154,42 @@ public class DataNode extends Configured
     if (dataXceiverServer != null) {
       ((DataXceiverServer) this.dataXceiverServer.getRunnable()).kill();
       this.dataXceiverServer.interrupt();
-
-      // wait for all data receiver threads to exit
-      if (this.threadGroup != null) {
-        int sleepMs = 2;
-        while (true) {
-          this.threadGroup.interrupt();
-          LOG.info("Waiting for threadgroup to exit, active threads is " +
-                   this.threadGroup.activeCount());
-          if (this.threadGroup.activeCount() == 0) {
-            break;
-          }
-          try {
-            Thread.sleep(sleepMs);
-          } catch (InterruptedException e) {}
-          sleepMs = sleepMs * 3 / 2; // exponential backoff
-          if (sleepMs > 1000) {
-            sleepMs = 1000;
-          }
+    }
+    if (localDataXceiverServer != null) {
+      ((DataXceiverServer) this.localDataXceiverServer.getRunnable()).kill();
+      this.localDataXceiverServer.interrupt();
+    }
+    // wait for all data receiver threads to exit
+    if (this.threadGroup != null) {
+      int sleepMs = 2;
+      while (true) {
+        this.threadGroup.interrupt();
+        LOG.info("Waiting for threadgroup to exit, active threads is " +
+                 this.threadGroup.activeCount());
+        if (this.threadGroup.activeCount() == 0) {
+          break;
+        }
+        try {
+          Thread.sleep(sleepMs);
+        } catch (InterruptedException e) {}
+        sleepMs = sleepMs * 3 / 2; // exponential backoff
+        if (sleepMs > 1000) {
+          sleepMs = 1000;
         }
       }
-      // wait for dataXceiveServer to terminate
+      this.threadGroup = null;
+    }
+    if (this.dataXceiverServer != null) {
+      // wait for dataXceiverServer to terminate
       try {
         this.dataXceiverServer.join();
+      } catch (InterruptedException ie) {
+      }
+    }
+    if (this.localDataXceiverServer != null) {
+      // wait for localDataXceiverServer to terminate
+      try {
+        this.localDataXceiverServer.join();
       } catch (InterruptedException ie) {
       }
     }
@@ -1264,7 +1319,7 @@ public class DataNode extends Configured
           BlockConstructionStage.PIPELINE_SETUP_CREATE, "")).start();
     }
   }
-
+  
   void transferBlocks(String poolId, Block blocks[],
       DatanodeInfo xferTargets[][]) {
     for (int i = 0; i < blocks.length; i++) {
@@ -1522,6 +1577,9 @@ public class DataNode extends Configured
 
     // start dataXceiveServer
     dataXceiverServer.start();
+    if (localDataXceiverServer != null) {
+      localDataXceiverServer.start();
+    }
     ipcServer.start();
     startPlugins(conf);
   }
@@ -2286,4 +2344,5 @@ public class DataNode extends Configured
   boolean shouldRun() {
     return shouldRun;
   }
+
 }

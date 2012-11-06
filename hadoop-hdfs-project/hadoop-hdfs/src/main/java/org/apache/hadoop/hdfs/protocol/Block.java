@@ -233,4 +233,16 @@ public class Block implements Writable, Comparable<Block> {
     //GenerationStamp is IRRELEVANT and should not be used here
     return (int)(blockId^(blockId>>>32));
   }
+
+  /**
+   * Get the format version of this block.
+   * 
+   * The format version must be incremented each time we make a non-backwards
+   * compatible change that breaks existing short-circuit local clients.
+   * 
+   * @return            the format version of this block.
+   */
+  public int getFormatVersion() {
+    return 1;
+  }
 }

@@ -290,4 +290,18 @@
        <Method name="persistPaxosData" />
        <Bug pattern="OS_OPEN_STREAM" />
      </Match>
+
+     <!-- getShortCircuitFdsForRead is supposed to return open streams. -->
+     <Match>
+       <Class name="org.apache.hadoop.hdfs.server.datanode.fsdataset.impl.FsDatasetImpl" />
+       <Method name="getShortCircuitFdsForRead" />
+       <Bug pattern="OBL_UNSATISFIED_OBLIGATION" />
+     </Match>
+
+     <!-- Findbugs is confused about a typecast which can't fail -->
+     <Match>
+       <Class name="org.apache.hadoop.hdfs.BlockReaderFactory" />
+       <Method name="create" />
+       <Bug pattern="BC_UNCONFIRMED_CAST" />
+     </Match>
  </FindBugsFilter>

@@ -84,26 +84,15 @@ public interface ClientDatanodeProtocol {
   void deleteBlockPool(String bpid, boolean force) throws IOException;
   
   /**
-   * Retrieves the path names of the block file and metadata file stored on the
-   * local file system.
-   * 
-   * In order for this method to work, one of the following should be satisfied:
-   * <ul>
-   * <li>
-   * The client user must be configured at the datanode to be able to use this
-   * method.</li>
-   * <li>
-   * When security is enabled, kerberos authentication must be used to connect
-   * to the datanode.</li>
-   * </ul>
+   * Deprecated method that used to return the path to a datanode.
+   * Now always throws AccessControlException.
    * 
    * @param block
    *          the specified block on the local datanode
    * @param token
    *          the block access token.
-   * @return the BlockLocalPathInfo of a block
-   * @throws IOException
-   *           on error
+   * @return the BlockLocalFdInfo of a block
+   * @throws AccessControlException always
    */
   BlockLocalPathInfo getBlockLocalPathInfo(ExtendedBlock block,
       Token<BlockTokenIdentifier> token) throws IOException;

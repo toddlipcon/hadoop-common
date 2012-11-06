@@ -33,6 +33,7 @@ import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.server.balancer.Balancer;
 import org.apache.hadoop.hdfs.util.DataTransferThrottler;
 import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.net.unix.DomainSocket;
 import org.apache.hadoop.util.Daemon;
 
 
@@ -134,7 +135,9 @@ class DataXceiverServer implements Runnable {
       Socket s = null;
       try {
         s = ss.accept();
-        s.setTcpNoDelay(true);
+        if (!(s instanceof DomainSocket)) {
+          s.setTcpNoDelay(true);
+        }
         // Timeouts are set within DataXceiver.run()
 
         // Make sure the xceiver count is not exceeded

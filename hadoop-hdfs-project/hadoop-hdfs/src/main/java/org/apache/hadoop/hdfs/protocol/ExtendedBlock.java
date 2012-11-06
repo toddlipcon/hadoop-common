@@ -119,4 +119,8 @@ public class ExtendedBlock {
   public String toString() {
     return poolId + ":" + block;
   }
+  
+  public int getFormatVersion() {
+    return block.getFormatVersion();
+  }
 }

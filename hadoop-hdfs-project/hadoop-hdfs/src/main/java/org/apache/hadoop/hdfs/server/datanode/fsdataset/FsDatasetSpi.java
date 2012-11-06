@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.server.datanode.fsdataset;
 
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -29,7 +30,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.protocol.Block;
 import org.apache.hadoop.hdfs.protocol.BlockListAsLongs;
-import org.apache.hadoop.hdfs.protocol.BlockLocalPathInfo;
 import org.apache.hadoop.hdfs.protocol.ExtendedBlock;
 import org.apache.hadoop.hdfs.protocol.HdfsBlocksMetadata;
 import org.apache.hadoop.hdfs.server.datanode.DataNode;
@@ -370,10 +370,10 @@ public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   public void deleteBlockPool(String bpid, boolean force) throws IOException;
   
   /**
-   * Get {@link BlockLocalPathInfo} for the given block.
+   * Get the {@link FileInputStream} objects associated with the given block.
    */
-  public BlockLocalPathInfo getBlockLocalPathInfo(ExtendedBlock b
-      ) throws IOException;
+  public FileInputStream[] getShortCircuitFdsForRead(ExtendedBlock block)
+      throws IOException;
 
   /**
    * Get a {@link HdfsBlocksMetadata} corresponding to the list of blocks in 

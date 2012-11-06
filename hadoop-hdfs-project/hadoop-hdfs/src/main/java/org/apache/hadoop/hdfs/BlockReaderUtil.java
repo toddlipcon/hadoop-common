@@ -17,6 +17,7 @@
  */
 package org.apache.hadoop.hdfs;
 
+import java.io.EOFException;
 import java.io.IOException;
 
 /**
@@ -49,6 +50,27 @@ class BlockReaderUtil {
       }
       toRead -= ret;
       off += ret;
+    }
+  }
+
+  /* See {@link BlockReader#skipFully(long)} */
+  public static void skipFully(BlockReader reader, long len)
+      throws IOException {
+    long amt = len;
+    while (amt > 0) {
+      long ret = reader.skip(amt);
+      if (ret == 0) {
+        byte buf[] = new byte[1];
+        // skip may return 0 even if we're not at EOF.  Luckily, we can 
+        // use the read() method to figure out if we're at the end.
+        int b = reader.read(buf, 0, buf.length);
+        if (b == -1) {
+          throw new EOFException( "Premature EOF from BlockReader after " +
+              "skipping " + (len - amt) + " byte(s).");
+        }
+        ret = b;
+      }
+      amt -= ret;
     }
   }
 }

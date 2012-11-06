@@ -155,9 +155,21 @@ public class RemoteBlockReader extends FSInputChecker implements BlockReader {
   }
 
   @Override
+  public void skipFully(long n) throws IOException {
+    BlockReaderUtil.skipFully(this, n);
+  }
+
+  @Override
   public int read() throws IOException {
     throw new IOException("read() is not expected to be invoked. " +
                           "Use read(buf, off, len) instead.");
+  }
+
+  @Override
+  public int available() throws IOException {
+    // An optimistic estimate of how much data is available
+    // to us without doing network I/O.
+    return DFSClient.TCP_WINDOW_SIZE;
   }
   
   @Override
@@ -320,7 +332,7 @@ public class RemoteBlockReader extends FSInputChecker implements BlockReader {
     return bytesToRead;
   }
   
-  private RemoteBlockReader(String file, String bpid, long blockId,
+  RemoteBlockReader(String file, String bpid, long blockId,
       DataInputStream in, DataChecksum checksum, boolean verifyChecksum,
       long startOffset, long firstChunkOffset, long bytesToRead, Socket dnSock) {
     // Path is used only for printing block and file information in debug

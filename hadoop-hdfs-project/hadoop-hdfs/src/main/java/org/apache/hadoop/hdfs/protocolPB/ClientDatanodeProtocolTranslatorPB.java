@@ -54,6 +54,7 @@ import org.apache.hadoop.ipc.ProtocolTranslator;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RpcClientUtil;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 
@@ -190,18 +191,8 @@ public class ClientDatanodeProtocolTranslatorPB implements
   @Override
   public BlockLocalPathInfo getBlockLocalPathInfo(ExtendedBlock block,
       Token<BlockTokenIdentifier> token) throws IOException {
-    GetBlockLocalPathInfoRequestProto req =
-        GetBlockLocalPathInfoRequestProto.newBuilder()
-        .setBlock(PBHelper.convert(block))
-        .setToken(PBHelper.convert(token)).build();
-    GetBlockLocalPathInfoResponseProto resp;
-    try {
-      resp = rpcProxy.getBlockLocalPathInfo(NULL_CONTROLLER, req);
-    } catch (ServiceException e) {
-      throw ProtobufHelper.getRemoteException(e);
-    }
-    return new BlockLocalPathInfo(PBHelper.convert(resp.getBlock()),
-        resp.getLocalPath(), resp.getLocalMetaPath());
+    throw new AccessControlException("getBlockLocalPathInfo is deprecated!  " + 
+        "Please upgrade your HDFS client.");
   }
 
   @Override

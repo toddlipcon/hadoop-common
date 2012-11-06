@@ -73,6 +73,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.TreeSet;
 
 import javax.net.SocketFactory;
 
@@ -145,12 +146,15 @@ import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.net.DNS;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.net.unix.DomainSocket;
+import org.apache.hadoop.net.unix.DomainSocketImpl;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenRenewer;
 import org.apache.hadoop.util.DataChecksum;
+import org.apache.hadoop.util.NativeCodeLoader;
 import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.Time;
 
@@ -227,6 +231,7 @@ public class DFSClient implements java.io.Closeable {
     final boolean getHdfsBlocksMetadataEnabled;
     final int getFileBlockStorageLocationsNumThreads;
     final int getFileBlockStorageLocationsTimeout;
+    final String domainSocketPath;
 
     Conf(Configuration conf) {
       maxFailoverAttempts = conf.getInt(
@@ -288,6 +293,7 @@ public class DFSClient implements java.io.Closeable {
       getFileBlockStorageLocationsTimeout = conf.getInt(
           DFSConfigKeys.DFS_CLIENT_FILE_BLOCK_STORAGE_LOCATIONS_TIMEOUT,
           DFSConfigKeys.DFS_CLIENT_FILE_BLOCK_STORAGE_LOCATIONS_TIMEOUT_DEFAULT);
+      domainSocketPath = conf.get(DFSConfigKeys.DFS_DATANODE_DOMAIN_SOCKET_PATH);
     }
 
     private DataChecksum.Type getChecksumType(Configuration conf) {
@@ -345,7 +351,13 @@ public class DFSClient implements java.io.Closeable {
   private final Map<String, DFSOutputStream> filesBeingWritten
       = new HashMap<String, DFSOutputStream>();
 
-  private boolean shortCircuitLocalReads;
+  private BlockReaderFactory blockReaderFactory;
+  
+  /**
+   * Domain socket paths that we tried and failed to use.
+   */
+  private final TreeSet<String> failedDomainSocketPaths =
+      new TreeSet<String>();
   
   /**
    * Same as this(NameNode.getAddress(conf), conf);
@@ -417,12 +429,10 @@ public class DFSClient implements java.io.Closeable {
     }
 
     // read directly from the block file if configured.
-    this.shortCircuitLocalReads = conf.getBoolean(
+    this.blockReaderFactory = new BlockReaderFactory(conf.getBoolean(
         DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_KEY,
-        DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_DEFAULT);
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Short circuit read is " + shortCircuitLocalReads);
-    }
+        DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_DEFAULT),
+        clientName, dfsClientConf);
     String localInterfaces[] =
       conf.getTrimmedStrings(DFSConfigKeys.DFS_CLIENT_LOCAL_INTERFACES);
     localInterfaceAddrs = getLocalInterfaceAddrs(localInterfaces);
@@ -785,23 +795,6 @@ public class DFSClient implements java.io.Closeable {
     } catch (RemoteException re) {
       throw re.unwrapRemoteException(InvalidToken.class,
                                      AccessControlException.class);
-    }
-  }
-
-  /**
-   * Get {@link BlockReader} for short circuited local reads.
-   */
-  static BlockReader getLocalBlockReader(Configuration conf,
-      String src, ExtendedBlock blk, Token<BlockTokenIdentifier> accessToken,
-      DatanodeInfo chosenNode, int socketTimeout, long offsetIntoBlock,
-      boolean connectToDnViaHostname) throws InvalidToken, IOException {
-    try {
-      return BlockReaderLocal.newBlockReader(conf, src, blk, accessToken,
-          chosenNode, socketTimeout, offsetIntoBlock, blk.getNumBytes()
-              - offsetIntoBlock, connectToDnViaHostname);
-    } catch (RemoteException re) {
-      throw re.unwrapRemoteException(InvalidToken.class,
-          AccessControlException.class);
     }
   }
   
@@ -2087,9 +2080,11 @@ public class DFSClient implements java.io.Closeable {
       super(in);
     }
   }
-  
-  boolean shouldTryShortCircuitRead(InetSocketAddress targetAddr) {
-    return shortCircuitLocalReads && isLocalAddress(targetAddr);
+
+  String getDomainSocketPath(InetSocketAddress targetAddr) {
+    if (!isLocalAddress(targetAddr)) return null;
+    if (!NativeCodeLoader.isNativeCodeLoaded()) return null;
+    return getConf().domainSocketPath;
   }
 
   void reportChecksumFailure(String file, ExtendedBlock blk, DatanodeInfo dn) {
@@ -2114,7 +2109,19 @@ public class DFSClient implements java.io.Closeable {
         + ", ugi=" + ugi + "]"; 
   }
 
-  void disableShortCircuit() {
-    shortCircuitLocalReads = false;
+  public boolean isFailedDomainSocketPath(String path) {
+    synchronized (failedDomainSocketPaths) {
+      return failedDomainSocketPaths.contains(path);
+    }
+  }
+  
+  public void addFailedDomainSocketPath(String path) {
+    synchronized (failedDomainSocketPaths) {
+      failedDomainSocketPaths.add(path);
+    }
+  }
+
+  public BlockReaderFactory getBlockReaderFactory() {
+    return blockReaderFactory;
   }
 }

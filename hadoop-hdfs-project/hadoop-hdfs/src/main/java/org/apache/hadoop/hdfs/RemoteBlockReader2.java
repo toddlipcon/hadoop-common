@@ -45,6 +45,7 @@ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status;
 import org.apache.hadoop.hdfs.security.token.block.DataEncryptionKey;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.security.token.block.InvalidBlockTokenException;
+import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.net.SocketInputWrapper;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.DataChecksum;
@@ -231,6 +232,18 @@ public class RemoteBlockReader2  implements BlockReader {
     return nSkipped;
   }
 
+  @Override
+  public int available() throws IOException {
+    // An optimistic estimate of how much data is available
+    // to us without doing network I/O.
+    return DFSClient.TCP_WINDOW_SIZE;
+  }
+
+  @Override
+  public void skipFully(long n) throws IOException {
+    BlockReaderUtil.skipFully(this, n);
+  }
+
   private void readTrailingEmptyPacket() throws IOException {
     if (LOG.isTraceEnabled()) {
       LOG.trace("Reading empty packet at end of read");
@@ -384,12 +397,8 @@ public class RemoteBlockReader2  implements BlockReader {
                                      throws IOException {
     
     ReadableByteChannel ch;
-    if (ioStreams.in instanceof SocketInputWrapper) {
-      ch = ((SocketInputWrapper)ioStreams.in).getReadableByteChannel();
-    } else {
-      ch = (ReadableByteChannel) ioStreams.in;
-    }
-    
+    ch = NetUtils.getInputStreamChannel(ioStreams.in);
+
     // in and out will be closed when sock is closed (by the caller)
     final DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
           ioStreams.out));

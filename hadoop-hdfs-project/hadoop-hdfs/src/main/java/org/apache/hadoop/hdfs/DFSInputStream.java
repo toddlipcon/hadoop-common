@@ -51,6 +51,8 @@ import org.apache.hadoop.hdfs.server.datanode.ReplicaNotFoundException;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.net.NetUtils;
+import org.apache.hadoop.net.unix.DomainSocket;
+import org.apache.hadoop.net.unix.DomainSocketImpl;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.token.Token;
 
@@ -805,10 +807,6 @@ public class DFSInputStream extends FSInputStream implements ByteBufferReadable 
                  e.getPos() + " from " + chosenNode);
         // we want to remember what we have tried
         addIntoCorruptedBlockMap(block.getBlock(), chosenNode, corruptedBlockMap);
-      } catch (AccessControlException ex) {
-        DFSClient.LOG.warn("Short circuit access failed ", ex);
-        dfsClient.disableShortCircuit();
-        continue;
       } catch (IOException e) {
         if (e instanceof InvalidEncryptionKeyException && refetchEncryptionKey > 0) {
           DFSClient.LOG.info("Will fetch a new encryption key and retry, " 
@@ -854,6 +852,64 @@ public class DFSInputStream extends FSInputStream implements ByteBufferReadable 
   }
 
   /**
+   * Create a new data socket.
+   * 
+   * @param inetAddr               The address to connect to
+   *
+   * @return                       A new data socket.
+   * @throws IOException 
+   */
+  private Socket newDataSocket(InetSocketAddress addr) throws IOException {
+    String dsPath = dfsClient.getDomainSocketPath(addr);
+    if (dsPath == null) {
+      return newTcpDataSocket(addr);
+    }
+    String edsPath = DomainSocketImpl.
+        getEffectivePath(dsPath, addr.getPort());
+    if (!dfsClient.isFailedDomainSocketPath(edsPath)) {
+      try {
+        DomainSocket sock = new DomainSocket();
+        sock.setPath(dsPath);
+        sock.connect(addr, dfsClient.getConf().socketTimeout);
+        sock.setSoTimeout(dfsClient.getConf().socketTimeout);
+        return sock;
+      } catch (IOException e) {
+        DFSClient.LOG.error("Failed to create a UNIX domain " +
+            "socket at " + edsPath, e);
+        dfsClient.addFailedDomainSocketPath(edsPath);
+        // fall through
+      }
+    }
+    return newTcpDataSocket(addr);
+  }
+    
+  private Socket newTcpDataSocket(InetSocketAddress addr) throws IOException {
+    // Create standard TCP socket
+    Socket sock = dfsClient.socketFactory.createSocket();
+    
+    // TCP_NODELAY is crucial here because of bad interactions between
+    // Nagle's Algorithm and Delayed ACKs. With connection keepalive
+    // between the client and DN, the conversation looks like:
+    //   1. Client -> DN: Read block X
+    //   2. DN -> Client: data for block X
+    //   3. Client -> DN: Status OK (successful read)
+    //   4. Client -> DN: Read block Y
+    // The fact that step #3 and #4 are both in the client->DN direction
+    // triggers Nagling. If the DN is using delayed ACKs, this results
+    // in a delay of 40ms or more.
+    //
+    // TCP_NODELAY disables nagling and thus avoids this performance
+    // disaster.
+    sock.setTcpNoDelay(true);
+
+    NetUtils.connect(sock, addr,
+        dfsClient.getRandomLocalInterfaceAddr(),
+        dfsClient.getConf().socketTimeout);
+    sock.setSoTimeout(dfsClient.getConf().socketTimeout);
+    return sock;
+  }
+  
+  /**
    * Retrieve a BlockReader suitable for reading.
    * This method will reuse the cached connection to the DN if appropriate.
    * Otherwise, it will create a new connection.
@@ -881,18 +937,9 @@ public class DFSInputStream extends FSInputStream implements ByteBufferReadable 
                                        boolean verifyChecksum,
                                        String clientName)
       throws IOException {
-    
-    // Can't local read a block under construction, see HDFS-2757
-    if (dfsClient.shouldTryShortCircuitRead(dnAddr) &&
-        !blockUnderConstruction()) {
-      return DFSClient.getLocalBlockReader(dfsClient.conf, src, block,
-          blockToken, chosenNode, dfsClient.hdfsTimeout, startOffset,
-          dfsClient.connectToDnViaHostname());
-    }
-    
     IOException err = null;
     boolean fromCache = true;
-
+    
     // Allow retry since there is no way of knowing whether the cached socket
     // is good until we actually use it.
     for (int retries = 0; retries <= nCachedConnRetry && fromCache; ++retries) {
@@ -906,43 +953,18 @@ public class DFSInputStream extends FSInputStream implements ByteBufferReadable 
       Socket sock;
       if (sockAndStreams == null) {
         fromCache = false;
-
-        sock = dfsClient.socketFactory.createSocket();
-        
-        // TCP_NODELAY is crucial here because of bad interactions between
-        // Nagle's Algorithm and Delayed ACKs. With connection keepalive
-        // between the client and DN, the conversation looks like:
-        //   1. Client -> DN: Read block X
-        //   2. DN -> Client: data for block X
-        //   3. Client -> DN: Status OK (successful read)
-        //   4. Client -> DN: Read block Y
-        // The fact that step #3 and #4 are both in the client->DN direction
-        // triggers Nagling. If the DN is using delayed ACKs, this results
-        // in a delay of 40ms or more.
-        //
-        // TCP_NODELAY disables nagling and thus avoids this performance
-        // disaster.
-        sock.setTcpNoDelay(true);
-
-        NetUtils.connect(sock, dnAddr,
-            dfsClient.getRandomLocalInterfaceAddr(),
-            dfsClient.getConf().socketTimeout);
-        sock.setSoTimeout(dfsClient.getConf().socketTimeout);
+        sock = newDataSocket(dnAddr);
       } else {
         sock = sockAndStreams.sock;
       }
 
       try {
         // The OP_READ_BLOCK request is sent as we make the BlockReader
-        BlockReader reader =
-            BlockReaderFactory.newBlockReader(dfsClient.getConf(),
-                                       sock, file, block,
-                                       blockToken,
-                                       startOffset, len,
-                                       bufferSize, verifyChecksum,
-                                       clientName,
-                                       dfsClient.getDataEncryptionKey(),
-                                       sockAndStreams == null ? null : sockAndStreams.ioStreams);
+        BlockReader reader = dfsClient.getBlockReaderFactory().
+            create(chosenNode, sock, file, block, blockToken,
+                  startOffset, len, bufferSize, verifyChecksum,
+                  dfsClient.getDataEncryptionKey(),
+                  sockAndStreams == null ? null : sockAndStreams.ioStreams);
         return reader;
       } catch (IOException ex) {
         // Our socket is no good.

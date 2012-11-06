@@ -39,9 +39,29 @@ public interface BlockReader extends ByteBufferReadable {
   int read(byte[] buf, int off, int len) throws IOException;
 
   /**
-   * Skip the given number of bytes
+   * Skip up to the given number of bytes
+   * 
+   * @param n     The maximum number of bytes to skip
+   * 
+   * @return      The number of bytes actually skipped
    */
   long skip(long n) throws IOException;
+
+  /**
+   * Skip exactly the given number of bytes
+   * 
+   * @param n     The exact number of bytes to skip
+   * 
+   * @throws      EOFException if we can't skip n bytes.
+   */
+  void skipFully(long n) throws IOException;
+
+  /**
+   * Returns an estimate of the number of bytes that can be read
+   * (or skipped over) from this input stream without performing
+   * network I/O.
+   */
+  int available() throws IOException;
 
   void close() throws IOException;
 

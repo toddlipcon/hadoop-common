@@ -17,30 +17,34 @@
  */
 package org.apache.hadoop.hdfs;
 
+import java.io.File;
 import java.io.IOException;
 
-import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.net.unix.TemporarySocketDirectory;
+import org.apache.hadoop.util.NativeCodeLoader;
 import org.junit.AfterClass;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class TestParallelLocalRead extends TestParallelReadUtil {
+  private static TemporarySocketDirectory sockDir;
 
   @BeforeClass
   static public void setupCluster() throws Exception {
+    sockDir = new TemporarySocketDirectory();
     HdfsConfiguration conf = new HdfsConfiguration();
-
+    conf.set(DFSConfigKeys.DFS_DATANODE_DOMAIN_SOCKET_PATH,
+      new File(sockDir.getDir(), "TestParallelLocalRead.%d.sock").getAbsolutePath());
     conf.setBoolean(DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_KEY, true);
-    conf.setBoolean(DFSConfigKeys.DFS_CLIENT_READ_SHORTCIRCUIT_SKIP_CHECKSUM_KEY,
-        false);
-    conf.set(DFSConfigKeys.DFS_BLOCK_LOCAL_PATH_ACCESS_USER_KEY,
-        UserGroupInformation.getCurrentUser().getShortUserName());
-
+    conf.setBoolean(DFSConfigKeys.
+        DFS_CLIENT_READ_SHORTCIRCUIT_SKIP_CHECKSUM_KEY, false);
     setupCluster(1, conf);
   }
 
   @AfterClass
   static public void teardownCluster() throws Exception {
+    sockDir.close();
     TestParallelReadUtil.teardownCluster();
   }
 
@@ -53,16 +57,19 @@ public class TestParallelLocalRead extends TestParallelReadUtil {
    */
   @Test
   public void testParallelReadCopying() throws IOException {
+    Assume.assumeTrue(NativeCodeLoader.isNativeCodeLoaded());
     runTestWorkload(new CopyingReadWorkerHelper());
   }
 
   @Test
   public void testParallelReadByteBuffer() throws IOException {
+    Assume.assumeTrue(NativeCodeLoader.isNativeCodeLoaded());
     runTestWorkload(new DirectReadWorkerHelper());
   }
 
   @Test
   public void testParallelReadMixed() throws IOException {
+    Assume.assumeTrue(NativeCodeLoader.isNativeCodeLoaded());
     runTestWorkload(new MixedWorkloadHelper());
   }
 }

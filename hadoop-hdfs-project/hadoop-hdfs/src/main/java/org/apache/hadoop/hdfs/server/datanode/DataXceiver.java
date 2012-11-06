@@ -18,6 +18,7 @@
 package org.apache.hadoop.hdfs.server.datanode;
 
 import static org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status.ERROR;
+import static org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status.ERROR_UNSUPPORTED;
 import static org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status.ERROR_ACCESS_TOKEN;
 import static org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status.SUCCESS;
 import static org.apache.hadoop.util.Time.now;
@@ -25,9 +26,12 @@ import static org.apache.hadoop.hdfs.server.datanode.DataNode.DN_CLIENTTRACE_FOR
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.EOFException;
+import java.io.FileDescriptor;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
@@ -59,15 +63,19 @@ import org.apache.hadoop.hdfs.protocol.proto.DataTransferProtos.Status;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenIdentifier;
 import org.apache.hadoop.hdfs.security.token.block.BlockTokenSecretManager;
 import org.apache.hadoop.hdfs.server.common.HdfsServerConstants;
+import org.apache.hadoop.hdfs.server.datanode.DataNode.ShortCircuitFdsUnsupportedException;
+import org.apache.hadoop.hdfs.server.datanode.DataNode.ShortCircuitFdsVersionException;
 import org.apache.hadoop.hdfs.server.datanode.fsdataset.LengthInputStream;
 import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.MD5Hash;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.net.SocketInputWrapper;
+import org.apache.hadoop.net.unix.DomainSocket;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.util.DataChecksum;
+import org.apache.hadoop.util.NativeCodeLoader;
 
 import com.google.protobuf.ByteString;
 
@@ -235,6 +243,49 @@ class DataXceiver extends Receiver implements Runnable {
       IOUtils.closeStream(in);
       IOUtils.closeSocket(s);
       dataXceiverServer.childSockets.remove(s);
+    }
+  }
+
+  @Override
+  public void requestShortCircuitFds(final ExtendedBlock blk,
+      final Token<BlockTokenIdentifier> token,
+      int maxVersion) throws IOException {
+    updateCurrentThreadName("Passing file descriptors for block " + blk);
+    BlockOpResponseProto.Builder bld = BlockOpResponseProto.newBuilder();
+    FileInputStream fis[] = null;
+    try {
+      fis = datanode.requestShortCircuitFdsForRead(blk, token, maxVersion);
+      bld.setStatus(SUCCESS);
+      bld.setShortCircuitAccessVersion(blk.getFormatVersion());
+    } catch (ShortCircuitFdsVersionException e) {
+      bld.setStatus(ERROR_UNSUPPORTED);
+      bld.setShortCircuitAccessVersion(blk.getFormatVersion());
+      bld.setMessage(e.getMessage());
+    } catch (ShortCircuitFdsUnsupportedException e) {
+      bld.setStatus(ERROR_UNSUPPORTED);
+      bld.setMessage(e.getMessage());
+    } catch (InvalidToken e) {
+      bld.setStatus(ERROR_ACCESS_TOKEN);
+      bld.setMessage(e.getMessage());
+    } catch (IOException e) {
+      bld.setStatus(ERROR);
+      bld.setMessage(e.getMessage());
+    }
+    try {
+      bld.build().writeDelimitedTo(socketOut);
+      if (fis != null) {
+        FileDescriptor fds[] = new FileDescriptor[fis.length];
+        for (int i = 0; i < fds.length; i++) {
+          fds[i] = fis[i].getFD();
+        }
+        DomainSocket ds = (DomainSocket)s;
+        byte buf[] = new byte[] { (byte)0 };
+        ds.sendFileDescriptors(fds, buf, 0, buf.length);
+      }
+    } finally {
+      if (fis != null) {
+        IOUtils.cleanup(LOG, fis);
+      }
     }
   }
 
