@@ -860,7 +860,7 @@ public class DFSOutputStream extends FSOutputSummer implements Syncable {
       DataInputStream in = null;
       try {
         sock = createSocketForPipeline(src, 2, dfsClient);
-        final long writeTimeout = dfsClient.getDatanodeWriteTimeout(2);
+        final int writeTimeout = dfsClient.getDatanodeWriteTimeout(2);
         
         OutputStream unbufOut = NetUtils.getOutputStream(sock, writeTimeout);
         InputStream unbufIn = NetUtils.getInputStream(sock);
@@ -1046,7 +1046,7 @@ public class DFSOutputStream extends FSOutputSummer implements Syncable {
           assert null == s : "Previous socket unclosed";
           assert null == blockReplyStream : "Previous blockReplyStream unclosed";
           s = createSocketForPipeline(nodes[0], nodes.length, dfsClient);
-          long writeTimeout = dfsClient.getDatanodeWriteTimeout(nodes.length);
+          int writeTimeout = dfsClient.getDatanodeWriteTimeout(nodes.length);
           
           OutputStream unbufOut = NetUtils.getOutputStream(s, writeTimeout);
           InputStream unbufIn = NetUtils.getInputStream(s);

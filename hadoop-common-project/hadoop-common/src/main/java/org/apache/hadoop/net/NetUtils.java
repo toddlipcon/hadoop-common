@@ -33,6 +33,7 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.UnknownHostException;
 import java.net.ConnectException;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.SocketChannel;
 import java.util.Map.Entry;
 import java.util.regex.Pattern;
@@ -50,6 +51,8 @@ import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.ipc.VersionedProtocol;
+import org.apache.hadoop.net.unix.DomainSocket;
+import org.apache.hadoop.net.unix.DomainSocketImpl;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.util.ReflectionUtils;
 
@@ -379,9 +382,39 @@ public class NetUtils {
    * 
    * @see #getInputStream(Socket, long)
    */
-  public static SocketInputWrapper getInputStream(Socket socket) 
+  public static InputStream getInputStream(Socket socket) 
                                            throws IOException {
     return getInputStream(socket, socket.getSoTimeout());
+  }
+
+  public static void setSocketTimeoutOnStream(Object obj, int timeo)
+      throws IOException {
+    if (obj instanceof SocketInputWrapper) {
+      ((SocketInputWrapper)obj).setTimeout(timeo);
+    } else if (obj instanceof DomainSocketImpl.SocketInputStream) {
+      ((DomainSocketImpl.SocketInputStream)obj).
+          getDomainSocket().setSoTimeout(timeo);
+    } else if (obj instanceof DomainSocketImpl.SocketOutputStream) {
+      ((DomainSocketImpl.SocketOutputStream)obj).
+          getDomainSocket().setSendTimeout(timeo);
+    } else {
+      throw new UnsupportedOperationException("don't know how to set " +
+          "socket timeout on this type of object");
+    }
+  }
+
+  public static ReadableByteChannel getInputStreamChannel(InputStream in) {
+    if (in instanceof SocketInputWrapper) {
+      return ((SocketInputWrapper)in).getReadableByteChannel();
+    } else if (in instanceof DomainSocketImpl.SocketInputStream) {
+      return ((DomainSocketImpl.SocketInputStream)in).
+          getDomainSocket().getChannel();
+    } else if (in instanceof ReadableByteChannel) {
+      return (ReadableByteChannel)in;
+    } else {
+      throw new UnsupportedOperationException("don't know how to get " +
+          "a ReadableByteChannel for this type of input stream.");
+    }
   }
 
   /**
@@ -405,8 +438,13 @@ public class NetUtils {
    * @return SocketInputWrapper for reading from the socket.
    * @throws IOException
    */
-  public static SocketInputWrapper getInputStream(Socket socket, long timeout) 
+  public static InputStream getInputStream(Socket socket, int timeout) 
                                            throws IOException {
+    if (socket instanceof DomainSocket) {
+      DomainSocket domainSocket = (DomainSocket)socket;
+      domainSocket.setSoTimeout(timeout);
+      return domainSocket.getInputStream();
+    }
     InputStream stm = (socket.getChannel() == null) ? 
           socket.getInputStream() : new SocketInputStream(socket);
     SocketInputWrapper w = new SocketInputWrapper(socket, stm);
@@ -459,8 +497,13 @@ public class NetUtils {
    * @return OutputStream for writing to the socket.
    * @throws IOException   
    */
-  public static OutputStream getOutputStream(Socket socket, long timeout) 
+  public static OutputStream getOutputStream(Socket socket, int timeout) 
                                              throws IOException {
+    if (socket instanceof DomainSocket) {
+      DomainSocket domainSocket = (DomainSocket)socket;
+      domainSocket.setSendTimeout(timeout);
+      return domainSocket.getOutputStream();
+    }
     return (socket.getChannel() == null) ? 
             socket.getOutputStream() : new SocketOutputStream(socket, timeout);            
   }

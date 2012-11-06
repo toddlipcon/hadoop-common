@@ -20,6 +20,7 @@ package org.apache.hadoop.net;
 import static org.junit.Assert.*;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.BindException;
 import java.net.ConnectException;
 import java.net.InetAddress;
@@ -122,7 +123,7 @@ public class TestNetUtils {
       assertNull(s.getChannel());
     }
     
-    SocketInputWrapper stm = null;
+    InputStream stm = null;
     try {
       NetUtils.connect(s, ss.getLocalSocketAddress(), 1000);
 
@@ -130,7 +131,7 @@ public class TestNetUtils {
       assertReadTimeout(stm, 1000);
 
       // Change timeout, make sure it applies.
-      stm.setTimeout(1);
+      NetUtils.setSocketTimeoutOnStream(stm, 1);
       assertReadTimeout(stm, 1);
       
       // If there is a channel, then setting the socket timeout
@@ -149,7 +150,7 @@ public class TestNetUtils {
     }
   }
   
-  private void assertReadTimeout(SocketInputWrapper stm, int timeoutMillis)
+  private void assertReadTimeout(InputStream stm, int timeoutMillis)
       throws IOException {
     long st = System.nanoTime();
     try {

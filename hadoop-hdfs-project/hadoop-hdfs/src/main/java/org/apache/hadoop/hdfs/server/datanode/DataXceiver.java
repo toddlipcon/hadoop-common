@@ -88,7 +88,7 @@ class DataXceiver extends Receiver implements Runnable {
   private final DataXceiverServer dataXceiverServer;
   private final boolean connectToDnViaHostname;
   private long opStartTime; //the start time of receiving an Op
-  private final SocketInputWrapper socketIn;
+  private final InputStream socketIn;
   private OutputStream socketOut;
 
   /**
@@ -189,9 +189,11 @@ class DataXceiver extends Receiver implements Runnable {
         try {
           if (opsProcessed != 0) {
             assert dnConf.socketKeepaliveTimeout > 0;
-            socketIn.setTimeout(dnConf.socketKeepaliveTimeout);
+            NetUtils.setSocketTimeoutOnStream(socketIn,
+                dnConf.socketKeepaliveTimeout);
           } else {
-            socketIn.setTimeout(dnConf.socketTimeout);
+            NetUtils.setSocketTimeoutOnStream(socketIn,
+                dnConf.socketTimeout);
           }
           op = readOp();
         } catch (InterruptedIOException ignored) {

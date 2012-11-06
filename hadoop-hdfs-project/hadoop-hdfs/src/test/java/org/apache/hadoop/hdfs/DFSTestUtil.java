@@ -729,7 +729,7 @@ public class DFSTestUtil {
     assertEquals(2, datanodes.length);
     final Socket s = DFSOutputStream.createSocketForPipeline(datanodes[0],
         datanodes.length, dfsClient);
-    final long writeTimeout = dfsClient.getDatanodeWriteTimeout(datanodes.length);
+    final int writeTimeout = dfsClient.getDatanodeWriteTimeout(datanodes.length);
     final DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
         NetUtils.getOutputStream(s, writeTimeout),
         HdfsConstants.SMALL_BUFFER_SIZE));
