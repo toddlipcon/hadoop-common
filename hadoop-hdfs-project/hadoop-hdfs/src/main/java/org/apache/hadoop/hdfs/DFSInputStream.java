@@ -872,6 +872,8 @@ public class DFSInputStream extends FSInputStream implements ByteBufferReadable 
         sock.setPath(dsPath);
         sock.connect(addr, dfsClient.getConf().socketTimeout);
         sock.setSoTimeout(dfsClient.getConf().socketTimeout);
+        sock.setReceiveBufferSize(64*1024);
+        sock.setSendBufferSize(64*1024);
         return sock;
       } catch (IOException e) {
         DFSClient.LOG.error("Failed to create a UNIX domain " +

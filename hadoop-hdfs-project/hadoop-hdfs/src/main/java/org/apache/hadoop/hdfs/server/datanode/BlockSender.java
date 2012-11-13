@@ -43,6 +43,7 @@ import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.ReadaheadPool.ReadaheadRequest;
 import org.apache.hadoop.io.nativeio.NativeIO;
 import org.apache.hadoop.net.SocketOutputStream;
+import org.apache.hadoop.net.TransferToCapable;
 import org.apache.hadoop.util.DataChecksum;
 
 /**
@@ -479,7 +480,7 @@ class BlockSender implements java.io.Closeable {
     
     try {
       if (transferTo) {
-        SocketOutputStream sockOut = (SocketOutputStream)out;
+        TransferToCapable sockOut = (TransferToCapable)out;
         // First write header and checksums
         sockOut.write(buf, headerOff, dataOff - headerOff);
         
@@ -629,7 +630,7 @@ class BlockSender implements java.io.Closeable {
       int maxChunksPerPacket;
       int pktBufSize = PacketHeader.PKT_MAX_HEADER_LEN;
       boolean transferTo = transferToAllowed && !verifyChecksum
-          && baseStream instanceof SocketOutputStream
+          && baseStream instanceof TransferToCapable
           && blockIn instanceof FileInputStream;
       if (transferTo) {
         FileChannel fileChannel = ((FileInputStream)blockIn).getChannel();

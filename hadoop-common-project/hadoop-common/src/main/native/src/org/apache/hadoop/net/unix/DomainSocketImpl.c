@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h> /* for FIONREAD */
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -993,39 +994,22 @@ static void byteBufferAdaptorFree(struct byteBufferAdaptor *adapt)
 
 JNIEXPORT jint JNICALL
 Java_org_apache_hadoop_net_unix_DomainSocketImpl_readByteBuffer0(
-JNIEnv *env, jclass clazz, jint fd, jobject bb)
+JNIEnv *env, jclass clazz, jint fd, jlong addr, jint len)
 {
-  jthrowable jthr;
-  struct byteBufferAdaptor adapt;
+  void *buf = (void *)addr;
   int res;
-
-  jthr = byteBufferAdaptorInit(env, &adapt, bb, 0);
-  if (jthr) {
-    goto error;
-  }
-  RETRY_ON_EINTR(res, read(fd, adapt.curBuf, adapt.curBufLen));
+  RETRY_ON_EINTR(res, read(fd, buf, len));
   if (res < 0) {
     res = errno;
     if (res != ECONNABORTED) {
-      jthr = newSocketException(env, res, "read(2) error: %s", 
-                                terror(res));
-      goto error;
+      (*env)->Throw(env, newSocketException(env, res, "read(2) error: %s", 
+                                            terror(res)));
     } else {
-      // The remote peer disconnected on us.  Treat this as an EOF.
-      res = -1;
+      // The remote peer disconnected on us.  Treat this as an EOF, no exception.
     }
+    return -1;
   }
-  jthr = byteBufferAdaptorClose(env, &adapt, res, 0);
-  if (jthr) {
-    goto error;
-  }
-  byteBufferAdaptorFree(&adapt);
   return res;
-
-error:
-  byteBufferAdaptorFree(&adapt);
-  (*env)->Throw(env, jthr);
-  return -1;
 }
 
 JNIEXPORT jint JNICALL
@@ -1062,4 +1046,19 @@ error:
   byteBufferAdaptorFree(&adapt);
   (*env)->Throw(env, jthr);
   return -1;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_apache_hadoop_net_unix_DomainSocketImpl_transferTo0(
+JNIEnv *env, jclass clazz, jint dstFd, jobject srcFdObj, jlong position, jint count)
+{
+  int srcFd = fd_get(env, srcFdObj);
+  // TODO: validate?
+  off_t pos_off = (off_t)position;
+  ssize_t ret = sendfile(dstFd, srcFd, &pos_off, count);
+  if (ret < 0) {
+    ret = errno;
+    (*env)->Throw(env, newSocketException(env, ret, "sendfile(2) error: %s", terror(ret)));
+  }
+  return ret;
 }

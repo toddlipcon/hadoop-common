@@ -137,6 +137,8 @@ class DataXceiverServer implements Runnable {
         s = ss.accept();
         if (!(s instanceof DomainSocket)) {
           s.setTcpNoDelay(true);
+          s.setSendBufferSize(64*1024);
+          s.setReceiveBufferSize(64*1024);
         }
         // Timeouts are set within DataXceiver.run()
 

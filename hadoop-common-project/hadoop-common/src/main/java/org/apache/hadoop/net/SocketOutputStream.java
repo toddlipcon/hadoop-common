@@ -46,7 +46,7 @@ import org.apache.hadoop.metrics2.lib.MutableRate;
 @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
 @InterfaceStability.Unstable
 public class SocketOutputStream extends OutputStream 
-                                implements WritableByteChannel {                                
+                                implements WritableByteChannel, TransferToCapable {                                
   
   private Writer writer;
   

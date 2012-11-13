@@ -23,7 +23,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.Inet4Address;
+import java.lang.reflect.Field;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -31,12 +31,16 @@ import java.net.SocketException;
 import java.net.SocketImpl;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.FileChannel;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.net.TransferToCapable;
 import org.apache.hadoop.util.NativeCodeLoader;
+
+import com.google.common.base.Preconditions;
 
 /**
  * The implementation of UNIX domain sockets in Java.
@@ -823,15 +827,28 @@ public class DomainSocketImpl extends SocketImpl {
   static native int readArray0(int fd, byte b[], int off, int len)
       throws IOException;
 
-  static native int readByteBuffer0(int fd, ByteBuffer dst) throws IOException;
+  static native int readByteBuffer0(int fd, long addr, int len) throws IOException;
   
   int readByteBuffer(ByteBuffer dst) throws IOException {
     int fd = fdRef();
     try {
-      return readByteBuffer0(fd, dst);
+      return readByteBufferInternal(fd, dst);
     } finally {
       fdUnref();
     }
+  }
+
+  private int readByteBufferInternal(int fd, ByteBuffer dst) throws IOException {
+    Preconditions.checkArgument(dst.isDirect());
+    // TODO support non-direct using a local tmp buffer
+    int pos = dst.position();
+    int rem = dst.remaining();
+    long addr = ((sun.nio.ch.DirectBuffer)dst).address() + pos;
+    int n = readByteBuffer0(fd, addr, rem);
+    if (n > 0) {
+      dst.position(pos + n);
+    }
+    return n;
   }
 
   long readByteBufferArray(ByteBuffer[] dsts, int offset, int length)
@@ -840,7 +857,7 @@ public class DomainSocketImpl extends SocketImpl {
     int fd = fdRef();
     try {
       for (int i = offset; i < length; i++) {
-        int nread = readByteBuffer0(fd, dsts[i]);
+        int nread = readByteBufferInternal(fd, dsts[i]);
         total += nread;
         if (dsts[i].remaining() > 0) {
           break;
@@ -903,6 +920,9 @@ public class DomainSocketImpl extends SocketImpl {
       throws IOException;
   
   static native int writeByteBuffer0(int fd, ByteBuffer src) throws IOException;
+  
+  private static native int transferTo0(int fd, FileDescriptor srcFd,
+      long offset, int length);
 
   int writeByteBuffer(ByteBuffer src) throws IOException {
     int fd = fdRef();
@@ -931,10 +951,23 @@ public class DomainSocketImpl extends SocketImpl {
     return total;
   }
 
+  static Field fdField;
+  static {
+    try {
+      fdField = sun.nio.ch.FileChannelImpl.class.getDeclaredField("fd");
+    } catch (SecurityException e) {
+      throw new RuntimeException(e);
+    } catch (NoSuchFieldException e) {
+      throw new RuntimeException(e);
+    }
+    fdField.setAccessible(true);
+  }
+  
   /**
    * Output stream for UNIX domain sockets.
    */
-  public class SocketOutputStream extends OutputStream {
+  public class SocketOutputStream extends OutputStream implements TransferToCapable {
+    
     @Override
     public void close() throws IOException {
       DomainSocketImpl.this.close();
@@ -968,6 +1001,36 @@ public class DomainSocketImpl extends SocketImpl {
 
     public DomainSocket getDomainSocket() {
       return DomainSocketImpl.this.getDomainSocket0();
+    }
+
+    @Override
+    public void transferToFully(FileChannel fileCh, long position, int count,
+        LongWritable waitForWritableTime, LongWritable transferToTime)
+        throws IOException {
+      FileDescriptor srcFd = getFd(fileCh);
+      int dstFd = fdRef();
+      try {
+        while (count > 0) {
+          int transferred = transferTo0(dstFd, srcFd, position, count);
+          if (transferred <= 0) {
+            // This shouldn't happen
+            throw new IOException("transferTo0 returned negative value: " + transferred);
+          }
+          count -= transferred;
+        }
+      } finally {
+        fdUnref();
+      }
+    }
+    
+    private FileDescriptor getFd(FileChannel fileCh) {
+      try {
+        return (FileDescriptor)fdField.get(fileCh);
+      } catch (IllegalArgumentException e) {
+        throw new RuntimeException(e);
+      } catch (IllegalAccessException e) {
+        throw new RuntimeException(e);
+      }
     }
   }
   
