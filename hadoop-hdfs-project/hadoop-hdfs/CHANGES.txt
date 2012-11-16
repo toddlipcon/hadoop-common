@@ -120,6 +120,8 @@ Release 2.0.3-alpha - Unreleased
     HDFS-4038. Override toString() for BookKeeperEditLogInputStream.
     (Vinay via umamahesh)
 
+    HDFS-3571. Allow EditLogFileInputStream to read from a remote URL (todd)
+
   OPTIMIZATIONS
 
   BUG FIXES 
