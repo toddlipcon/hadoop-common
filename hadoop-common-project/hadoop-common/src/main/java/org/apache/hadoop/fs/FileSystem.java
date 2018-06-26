@@ -3721,6 +3721,12 @@ public abstract class FileSystem extends Configured implements Closeable {
     private final Set<StatisticsDataReference> allData;
 
     /**
+     * Cached array holding the same values referred to by the
+     * entries of 'allData'. Protected by the same lock.
+     */
+    private StatisticsData[] dataArray;
+
+    /**
      * Global reference queue and a cleaner thread that manage statistics data
      * references from all filesystem instances.
      */
@@ -3742,6 +3748,7 @@ public abstract class FileSystem extends Configured implements Closeable {
       this.rootData = new StatisticsData();
       this.threadData = new ThreadLocal<>();
       this.allData = new HashSet<>();
+      resetDataArray();
     }
 
     /**
@@ -3752,18 +3759,19 @@ public abstract class FileSystem extends Configured implements Closeable {
     public Statistics(Statistics other) {
       this.scheme = other.scheme;
       this.rootData = new StatisticsData();
-      other.visitAll(new StatisticsAggregator<Void>() {
-        @Override
-        public void accept(StatisticsData data) {
-          rootData.add(data);
-        }
-
-        public Void aggregate() {
-          return null;
-        }
-      });
+      rootData.add(other.getData());
       this.threadData = new ThreadLocal<>();
       this.allData = new HashSet<>();
+      resetDataArray();
+    }
+
+    private synchronized void resetDataArray() {
+      dataArray = new StatisticsData[allData.size() + 1];
+      int i = 0;
+      dataArray[i++] = rootData;
+      for (StatisticsDataReference ref: allData) {
+        dataArray[i++] = ref.getData();
+      }
     }
 
     /**
@@ -3797,6 +3805,7 @@ public abstract class FileSystem extends Configured implements Closeable {
            */
           rootData.add(data);
           allData.remove(this);
+          resetDataArray();
         }
       }
     }
@@ -3829,13 +3838,19 @@ public abstract class FileSystem extends Configured implements Closeable {
     public StatisticsData getThreadStatistics() {
       StatisticsData data = threadData.get();
       if (data == null) {
-        data = new StatisticsData();
-        threadData.set(data);
-        StatisticsDataReference ref =
-            new StatisticsDataReference(data, Thread.currentThread());
-        synchronized(this) {
-          allData.add(ref);
-        }
+        return setThreadLocal();
+      }
+      return data;
+    }
+
+    private StatisticsData setThreadLocal() {
+      StatisticsData data = new StatisticsData();
+      threadData.set(data);
+      StatisticsDataReference ref =
+          new StatisticsDataReference(data, Thread.currentThread());
+      synchronized(this) {
+        allData.add(ref);
+        resetDataArray();
       }
       return data;
     }
@@ -3916,80 +3931,39 @@ public abstract class FileSystem extends Configured implements Closeable {
     }
 
     /**
-     * Apply the given aggregator to all StatisticsData objects associated with
-     * this Statistics object.
-     *
-     * For each StatisticsData object, we will call accept on the visitor.
-     * Finally, at the end, we will call aggregate to get the final total.
-     *
-     * @param         visitor to use.
-     * @return        The total.
-     */
-    private synchronized <T> T visitAll(StatisticsAggregator<T> visitor) {
-      visitor.accept(rootData);
-      for (StatisticsDataReference ref: allData) {
-        StatisticsData data = ref.getData();
-        visitor.accept(data);
-      }
-      return visitor.aggregate();
-    }
-
-    /**
      * Get the total number of bytes read.
      * @return the number of bytes
      */
-    public long getBytesRead() {
-      return visitAll(new StatisticsAggregator<Long>() {
-        private long bytesRead = 0;
-
-        @Override
-        public void accept(StatisticsData data) {
-          bytesRead += data.bytesRead;
-        }
-
-        public Long aggregate() {
-          return bytesRead;
-        }
-      });
+    public synchronized long getBytesRead() {
+      long bytesRead = 0;
+      for (StatisticsData data : dataArray) {
+        bytesRead += data.bytesRead;
+      }
+      return bytesRead;
     }
 
     /**
      * Get the total number of bytes written.
      * @return the number of bytes
      */
-    public long getBytesWritten() {
-      return visitAll(new StatisticsAggregator<Long>() {
-        private long bytesWritten = 0;
-
-        @Override
-        public void accept(StatisticsData data) {
-          bytesWritten += data.bytesWritten;
-        }
-
-        public Long aggregate() {
-          return bytesWritten;
-        }
-      });
+    public synchronized long getBytesWritten() {
+      long bytesWritten = 0;
+      for (StatisticsData data : dataArray) {
+        bytesWritten += data.bytesWritten;
+      }
+      return bytesWritten;
     }
 
     /**
      * Get the number of file system read operations such as list files.
      * @return number of read operations
      */
-    public int getReadOps() {
-      return visitAll(new StatisticsAggregator<Integer>() {
-        private int readOps = 0;
-
-        @Override
-        public void accept(StatisticsData data) {
-          readOps += data.readOps;
-          readOps += data.largeReadOps;
-        }
-
-        public Integer aggregate() {
-          return readOps;
-        }
-      });
+    public synchronized int getReadOps() {
+      int readOps = 0;
+      for (StatisticsData data: dataArray) {
+        readOps += data.readOps + data.largeReadOps;
+      }
+      return readOps;
     }
 
     /**
@@ -3997,19 +3971,12 @@ public abstract class FileSystem extends Configured implements Closeable {
      * under a large directory.
      * @return number of large read operations
      */
-    public int getLargeReadOps() {
-      return visitAll(new StatisticsAggregator<Integer>() {
-        private int largeReadOps = 0;
-
-        @Override
-        public void accept(StatisticsData data) {
-          largeReadOps += data.largeReadOps;
-        }
-
-        public Integer aggregate() {
-          return largeReadOps;
-        }
-      });
+    public synchronized int getLargeReadOps() {
+      int largeReadOps = 0;
+      for (StatisticsData data: dataArray) {
+        largeReadOps += data.largeReadOps;
+      }
+      return largeReadOps;
     }
 
     /**
@@ -4017,19 +3984,11 @@ public abstract class FileSystem extends Configured implements Closeable {
      * rename etc.
      * @return number of write operations
      */
-    public int getWriteOps() {
-      return visitAll(new StatisticsAggregator<Integer>() {
-        private int writeOps = 0;
-
-        @Override
-        public void accept(StatisticsData data) {
-          writeOps += data.writeOps;
-        }
-
-        public Integer aggregate() {
-          return writeOps;
-        }
-      });
+    public synchronized int getWriteOps() {
+      int writeOps = 0;
+      for (StatisticsData data: dataArray) {
+        writeOps += data.writeOps;
+      }
     }
 
     /**
@@ -4067,54 +4026,29 @@ public abstract class FileSystem extends Configured implements Closeable {
      * MR or other frameworks can use the method to get all statistics at once.
      * @return the StatisticsData
      */
-    public StatisticsData getData() {
-      return visitAll(new StatisticsAggregator<StatisticsData>() {
-        private StatisticsData all = new StatisticsData();
-
-        @Override
-        public void accept(StatisticsData data) {
-          all.add(data);
-        }
-
-        public StatisticsData aggregate() {
-          return all;
-        }
-      });
+    public synchronized StatisticsData getData() {
+      StatisticsData all = new StatisticsData();
+      for (StatisticsData data: dataArray) {
+        all.add(data);
+      }
+      return all;
     }
 
     /**
      * Get the total number of bytes read on erasure-coded files.
      * @return the number of bytes
      */
-    public long getBytesReadErasureCoded() {
-      return visitAll(new StatisticsAggregator<Long>() {
-        private long bytesReadErasureCoded = 0;
-
-        @Override
-        public void accept(StatisticsData data) {
-          bytesReadErasureCoded += data.bytesReadErasureCoded;
-        }
-
-        public Long aggregate() {
-          return bytesReadErasureCoded;
-        }
-      });
+    public synchronized long getBytesReadErasureCoded() {
+      long bytesReadErasureCoded = 0;
+      for (StatisticsData data: dataArray) {
+        bytesReadErasureCoded += data.bytesReadErasureCoded;
+      }
+      return bytesReadErasureCoded;
     }
 
     @Override
     public String toString() {
-      return visitAll(new StatisticsAggregator<String>() {
-        private StatisticsData total = new StatisticsData();
-
-        @Override
-        public void accept(StatisticsData data) {
-          total.add(data);
-        }
-
-        public String aggregate() {
-          return total.toString();
-        }
-      });
+      return getData().toString();
     }
 
     /**
@@ -4135,21 +4069,10 @@ public abstract class FileSystem extends Configured implements Closeable {
      * are done under the lock, so we're free to modify rootData from any thread
      * that holds the lock.
      */
-    public void reset() {
-      visitAll(new StatisticsAggregator<Void>() {
-        private StatisticsData total = new StatisticsData();
-
-        @Override
-        public void accept(StatisticsData data) {
-          total.add(data);
-        }
-
-        public Void aggregate() {
-          total.negate();
-          rootData.add(total);
-          return null;
-        }
-      });
+    public synchronized void reset() {
+      StatisticsData total = getData();
+      total.negate();
+      rootData.add(total);
     }
 
     /**
